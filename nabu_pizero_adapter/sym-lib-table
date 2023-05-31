@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name "polulo")(type "KiCad")(uri "${KIPRJMOD}/polulo.kicad_sym")(options "")(descr ""))
+)

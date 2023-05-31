@@ -1,0 +1,37 @@
+Component,Description,References,Value,Quantity Per PCB,Digi-Key,MFN
+1,"Unpolarized capacitor, small symbol",C3 C4 C5 C6,0.1uf,4,490-9197-1-ND,RDER72A104K1S1H03A
+2,Polarized capacitor,C1 C2,50F,2,1182-1051-ND,BCAP0050 P270 X01
+3,"Diode, small symbol",D1 D3,1n5820,2,112-1N5820-E3/73CT-ND,1N5820-E3/73
+4,Zener diode,D2 D4,TVS,2,1N4734AFSCT-ND 1N4733AFSCT-ND,1N4734ATR 1N4733ATR
+5,Fuse,F1,Fuse,1,F2313-ND,0251001.MXL
+6,"Generic connector, single row, 01x03, script generated (kicad-library-utils/schlib/autogen/connector/)",J4,Conn_01x03,1,,
+7,"Generic connector, single row, 01x05, script generated (kicad-library-utils/schlib/autogen/connector/)",J5,Front Panel,1,,
+8,"Generic connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)",J3,Power,1,S1012EC-40-ND,PREC040SAAN-RC
+9,5-pin DIN connector (5-pin DIN-5 stereo),J2,RS422 - To Computer,1,CP-2350-ND,SDS-50J
+10,"Resistor, small symbol",R1,180,1,13-MFR-25FTE52-180RCT-ND,MFR-25FTE52-180R
+11,"Resistor, small symbol",R9 R10 R11 R12,220,4,220QBK-ND,CFR-25JB-52-220R
+12,"Resistor, small symbol",R3 R4,1k,2,1.0KQBK-ND,CFR-25JB-52-1K
+13,"Resistor, small symbol",R6 R8,7.5k,2,7.5KQBK-ND,CFR-25JB-52-7K5
+14,"Resistor, small symbol",R5 R7,10k,2,13-CFR-25JT-52-10KCT-ND,CFR-25JT-52-10K
+15,"Resistor, small symbol",R2,2.2 3W,1,A138434CT-ND,RR03J2R2TB
+16,"10MHz, 8kB Flash, 512B SRAM, 512B EEPROM, debugWIRE, DIP-8",U3,ATtiny85V-10P,1,ATTINY85V-10PU-ND,ATTINY85V-10PU
+17,"RS-485, RS-422 Full duplex 250kbps transceiver, DIP-14",U1,MAX3070,1,MAX3070EEPD+-ND,MAX3070EEPD+
+18,"Shunt Regulator, TO-92",U5 U6,TL431LP,2,296-50325-ND,TL431AILPE3
+19,Polou 5V Step-Up Converter,U4,U3V70F5,1,"2183-2891-ND, S7037-ND, S7038-ND",2891
+20,"Darlington Transistor Arrays, SOIC18/DIP18",U2,ULN2803A,1,497-2356-5-ND,ULN2803A
+
+
+
+
+
+Component Groups:,20
+Component Count:,33
+Fitted Components:,33
+Number of PCBs:,1
+Total components:,33
+Schematic Version:,1.0
+Schematic Date:,2023-05-30
+PCB Variant:,default
+BoM Date:,Tue 30 May 2023 06:34:02 PM EDT
+Schematic Source:,nabu_pizero_adapter.kicad_sch
+KiCad Version:,Eeschema 6.0.2+dfsg-1

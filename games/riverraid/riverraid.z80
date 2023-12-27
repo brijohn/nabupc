@@ -1,0 +1,729 @@
+;
+; RiverRaid Copyright Activision 1982,1984
+;   NABU Conversion by Brian Johnson 2023
+;
+;
+; This currently is playable on metal, but has graphics
+; glitches along the shoreline. It does work fine under
+; emulation though. Unfortunately this makes it difficult
+; to debug the graphics errors in metal.
+;
+
+VDP_LATCH:    equ 0xa1
+VDP_DATA:     equ 0xa0
+
+PSG_LATCH:    equ 0x41
+PSG_WRITE:    equ 0x40
+PSG_READ:     equ 0x40
+
+MSX_INIT:     equ 0x4002
+
+VBLANK_FLAG:  equ 0xe347
+
+org 0x140d
+	nop
+	nop
+	nop
+	jp     entry
+
+; SHA1: a1e14912d45944b9a6baef1d4d3a04c1ae8df923
+msxcode:   incbin "RiverRaid.rom"
+msxlength: equ $-msxcode
+
+; ---------------------------------------------
+;     MSX Wrapper Entry Point
+; ---------------------------------------------
+
+entry:
+	di
+	ld     sp, 0xE000          ; Set temporary stack to high 8k of RAM
+	ld     a, 0x03
+	out    (0x00), a           ; Disable ROM
+
+	ld     hl, msxcode         ; Copy ROM code to bottom 32k of RAM
+	ld     de, 0x0000
+	ld     bc, msxlength
+	ldir
+
+	call   splash
+	call   patch               ; Patch ROM I/O accesses
+
+	ld     a, 0xA0             ; Interrupt vector at address 0xA000
+	ld     i, a
+	im     2                   ; Interrupt Mode 2
+
+	ld     a, 0x07             ; I/O Port configuration register
+	out    (0x41), a
+	ld     a, 0x7F             ; Port A write, Port B read
+	out    (0x40), a
+	ld     a, 0x0E             ; I/O Port A register
+	out    (0x41), a
+	ld     a, 0x30             ; Enable VBlank and keyboard interrupt
+	out    (0x40), a
+
+	ld     hl, (MSX_INIT)
+	jp     (hl)                ; Jump to MSX ROM entry point
+
+; ---------------------------------------------
+;     ROM Patcher
+; ---------------------------------------------
+patch:
+	ld     ix, patch_table     ; Address of patch table
+	ld     de, 0x4000          ; ROM is 16k mirrored at the 0x4000 offset
+apply_patch:
+	ld     l, (ix+0)
+	ld     h, (ix+1)           ; Load first word in table (address to patch)
+	ld     a, h
+	or     l
+	jr     z, patch_done       ; If address == 0 we are done
+	inc    ix
+	inc    ix                  ; Increment pointer to length byte for entry
+	ld     b, (ix+0)           ; B = number of bytes to patch
+patch_byte:
+	inc    ix                  ; IX = address of first patch byte in current entry
+	ld     a, (ix+0)           ; A = new value
+	ld     (hl), a             ; Update ROM with new byte value
+	push   hl
+	add    hl, de              ; Add 0x4000 to current address and
+	ld     (hl), a             ; patch it as well
+	pop    hl                  ; Restore HL
+	inc    hl                  ; Increment patch address
+	djnz   patch_byte          ; Decrement B if not zero patch next byte in entry
+	inc    ix                  ; Move to next entry in patch table
+	jr     apply_patch         ; Apply next patch to ROM
+patch_done:
+	ret
+
+; ---------------------------------------------
+;     Table of patches to apply to ROM
+;        Entry format
+;         0  - Address to patch
+;         2  - Number of bytes
+;         3+ - List of bytes
+;     The last entry will have an address of 0
+; ---------------------------------------------
+
+patch_table:
+; Disable ROM check
+	dw     0x006c
+	db     2, 0, 0
+
+; Do not change input/output state of PSG I/O Ports A&B
+	dw     0x3ba0
+	db     1, 0x40
+	dw     0x3ea7
+	db     1, 0x78
+
+; Patch ROM functions
+	dw     0x3d43
+	db     3, 0xc3
+	dw     CONTROLS_GetDirection
+
+	dw     0x3db5
+	db     3, 0xc3
+	dw     CONTROLS_GetFire
+
+	dw     0x3de0
+	db     3, 0xc3
+	dw     KEYBOARD_ResetAndPause
+
+	dw     0x3e48
+	db     3, 0xc3
+	dw     KEYBOARD_GetReturn
+
+	dw     0x3e5a
+	db     3, 0xc3
+	dw     KEYBOARD_GetLevelSelect
+
+	dw     0x3eb0
+	db     3, 0xc3
+	dw     PSG_WriteRegister
+
+	dw     0x3eba
+	db     3, 0xc3
+	dw     PSG_ReadRegister
+
+	dw     0x3ebf
+	db     3, 0xc3
+	dw     VDP_GetStatus
+
+	dw     0x3ec5
+	db     3, 0xc3
+	dw     VDP_SetRegister2
+
+	dw     0x3ed0
+	db     3, 0xc3
+	dw     VDP_ReadVRAM
+
+	dw     0x3eea
+	db     3, 0xc3
+	dw     VDP_SetReadAddress
+
+	dw     0x3ef3
+	db     3, 0xc3
+	dw     VDP_WriteVRAM
+
+	dw     0x3f0d
+	db     3, 0xc3
+	dw     VDP_SetWriteAddress
+
+	dw     0x3f18
+	db     3, 0xc3
+	dw     VDP_FillVRAM
+
+; End of patch table
+	dw 0
+	db 0
+
+; ---------------------------------------------
+; Splash Screen
+; ---------------------------------------------
+splash:
+	ld     c, 0x00
+	ld     b, 0x00
+	call   VDP_SetRegister2
+	ld     c, 0x01
+	ld     b, 0xC0
+	call   VDP_SetRegister2              ; Graphics Mode I
+	ld     c, 0x02
+	ld     b, 0x00
+	call   VDP_SetRegister2              ; Name Table Address 0x0000
+	ld     c, 0x03
+	ld     b, 0x30
+	call   VDP_SetRegister2              ; Color Table Address 0x0C00
+	ld     c, 0x04
+	ld     b, 0x02
+	call   VDP_SetRegister2              ; Pattern Generator Address 0x1000
+	ld     c, 0x05
+	ld     b, 0x1a
+	call   VDP_SetRegister2              ; Sprite Attribute Table Address 0x0D00
+	ld     c, 0x06
+	ld     b, 0x07
+	call   VDP_SetRegister2              ; Sprite Pattern Generator Address 0x3800
+	ld     c, 0x07
+	ld     b, 0xF1
+	call   VDP_SetRegister2
+	ld     a, 0xd0
+	ld     de, 0x0001
+	ld     hl, 0x0d00
+	call   VDP_FillVRAM                  ; Disable sprites
+	ld     a, 0x61
+	ld     de, 0x0020
+	ld     hl, 0x0c00
+	call   VDP_FillVRAM                  ; Red foreground black background
+	ld     a, 0x20
+	ld     de, 0x0300
+	ld     hl, 0x0000
+	call   VDP_FillVRAM                  ; Fill screen with spaces
+	ld     bc, 0x02d0
+	ld     de, 0x1100
+	ld     hl, 0x37c8
+	call   VDP_WriteVRAM                 ; Load ROM's pattern generator for font
+	ld     bc, 0x001b
+	ld     de, 0x0182
+	ld     hl,splash_msg
+	call   VDP_WriteVRAM                 ; Display splash screen message
+	xor    a
+	ld     b, 0x08
+	ld     d, a
+	ld     e, a
+delay_loop:                              ; Delay
+	dec    de
+	ld     a, d
+	or     e
+	jr     nz, delay_loop
+	djnz   delay_loop
+	ret
+
+splash_msg: db "Conversion by Brian Johnson"
+
+; ---------------------------------------------
+;     Stub IRQ Handler
+; ---------------------------------------------
+nullirq:
+	reti
+
+; ---------------------------------------------
+;     Keyboard IRQ Handler
+; ---------------------------------------------
+kbirq:
+	push   af
+	push   hl
+	ld     a, (joystick)
+	cp     0x80
+	jr     z, joystick1_handler ; If the last byte received was 0x80 handle joystick 1 input
+	cp     0x81
+	jr     z, joystick2_handler ; If the last byte received was 0x81 handle joystick 2 input
+	xor    a
+	ld     (joystick), a       ; Clear joystick flag
+	in     a, (0x90)
+	cp     0x94
+	jr     z, kbirq_exit       ; If byte received was 0x94 (watchdog) simply exit
+	cp     0x0D
+	jr     z, go_pressed       ; The GO(Enter) key was preseed
+	cp     0x12
+	jr     z, reset_pressed    ; CTRL-R (Reset) was pressed
+	cp     0x20
+	jr     z, fire_pressed     ; Spacebar (FIRE) was pressed
+	cp     0xE9
+	jr     z, pause_pressed    ; PAUSE key was pressed
+	cp     0x31
+	jr     c, kbirq_exit
+	cp     0x39
+	jr     c, level_select     ; A number between 1 and 8 was pressed
+	cp     0x80
+	jr     c, kbirq_exit
+	cp     0x82
+	jr     c, joystick_select  ; A joystick command byte (0x80-0x81) was seen
+	cp     0xE0
+	jr     c, kbirq_exit
+	cp     0xE4
+	call   c, arrow_handler    ; A make code for the arrow keys was seen
+	cp     0xF0
+	jr     c, kbirq_exit
+	cp     0xF4
+	call   c, arrow_handler    ; A break code for the arrows was seen
+	jr     kbirq_exit
+joystick_select:
+	ld     (joystick), a       ; Update joystick flag with byte received
+	jr     kbirq_exit
+pause_pressed:
+	ld     hl, pause           ; Store PAUSE key
+	jr     store_key
+reset_pressed:
+	ld     hl, reset           ; Store Ctrl-R (RESET)
+	jr     store_key
+go_pressed:
+	ld     hl, enter           ; Store GO key
+store_key:
+	ld     (hl), a             ; Stores scancode for later
+	jr     kbirq_exit
+level_select:
+	sub    0x30                ; Turn scancode into digit between 1 and 8
+	ld     (level), a          ; and store it as the selected level
+	jr     kbirq_exit
+fire_pressed:
+	ld     hl, key_state       ; HL = address of keyboard control state
+	set    4, (hl)             ; Set the FIRE bit in the control state for the keyboard
+	ld     a, 1
+	ld     (fire_delay), a     ; Delay counter till FIRE key gets released
+	jr     kbirq_exit
+joystick1_handler:
+	ld     hl, joy1_state      ; HL = address of joystick 1 state
+	jp     joystick_handler
+joystick2_handler:
+	ld     hl, joy2_state      ; HL = address of joystick 2 state
+joystick_handler:
+	xor    a
+	ld     (joystick), a       ; Clear joystick flag
+	in     a, (0x90)           ; Read joystick input
+	and    0x1f
+	ld     (hl), a             ; save joystick state
+kbirq_exit:
+	pop    hl
+	pop    af
+	reti
+
+joystick:  db 0
+enter:     db 0
+pause:     db 0
+reset:     db 0
+level:     db 0
+joy1_state:db 0
+joy2_state:db 0
+key_state: db 0
+fire_delay:db 0
+
+; ---------------------------------------------
+; Arrow Key Handler
+;
+; This function takes the make/break arrow key
+; scancodes and converts them into a bit array
+; in the same layout as the joysticks data byte.
+;   (- - - - U R D L)
+; ---------------------------------------------
+arrow_handler:
+	ld     hl, key_state
+	and    0x13
+	cp     0x00
+	jr     nz, mklt
+	set    2, (hl)
+mklt:
+	cp     0x01
+	jr     nz, mkup
+	set    0, (hl)
+mkup:
+	cp     0x02
+	jr     nz, mkdn
+	set    3, (hl)
+mkdn:
+	cp     0x03
+	jr     nz, bkrt
+	set    1, (hl)
+bkrt:
+	cp     0x10
+	jr     nz, bklt
+	res    2, (hl)
+bklt:
+	cp     0x11
+	jr     nz, bkup
+	res    0, (hl)
+bkup:
+	cp     0x12
+	jr     nz, bkdn
+	res    3, (hl)
+bkdn:
+	cp     0x13
+	ret    nz
+	res    1, (hl)
+	ret
+
+; ---------------------------------------------
+;     Vertical Blank Interrupt
+; ---------------------------------------------
+vbirq:
+	push   af
+	push   hl
+	ld     a, 0x01
+	ld     (VBLANK_FLAG), a    ; Store flag telling us a VBlank has occured
+	ld     a, (fire_delay)
+	cp     0
+	jr     z, vb_done          ; If fire_delay is 0 return from interrupt
+	inc    a                   ; Increment fire_delay
+	and    0x0f                ; fire_delay mod 15
+	ld     (fire_delay), a     ; Update fire_delay
+	cp     0
+	jr     nz, vb_done         ; If fire_delay has not wrapped back to 0 exit interrupt
+	ld     hl, key_state
+	res    4, (hl)             ; Else reset keyboard fire button state
+vb_done:
+	pop    hl
+	pop    af
+	reti
+
+; ----------------------------------------------------------
+; Gets the current 8way direction from input device
+;   uint8_t CONTROLS_GetDirection(uint8_t device)
+;       device : A  (0 = keyboard, 1 = Joystick 1, 2 = Joystick 2)
+;       return : A  (0-8)
+; ----------------------------------------------------------
+CONTROLS_GetDirection:
+	dec    a
+	jp     m, Keyboard_Direction
+	jr     nz, Joy2_Direction
+	ld     a, (joy1_state)
+	and    0x0f
+	jr     z, Keyboard_Direction
+	jr     Map_Direction
+Joy2_Direction:
+	ld     a, (joy2_state)
+	and    0x0f
+	jr     z, Keyboard_Direction
+	jr     Map_Direction
+Keyboard_Direction:
+	ld     a, (key_state)
+Map_Direction:
+	cpl
+	and    0x0f
+	ld     e, a
+	ld     d, 0x00
+	ld     hl, JoyToDirection
+	add    hl, de
+	ld     a, (hl)
+	ret
+
+JoyToDirection:
+	defb   0x00
+	defb   0x03
+	defb   0x01
+	defb   0x02
+	defb   0x07
+	defb   0x04
+	defb   0x08
+	defb   0x01
+	defb   0x05
+	defb   0x04
+	defb   0x00
+	defb   0x03
+	defb   0x06
+	defb   0x05
+	defb   0x07
+	defb   0x00
+
+; ----------------------------------------------------------
+; Checks if fire button has been pressed
+;   uint8_t CONTROLS_GetFire(uint8_t device)
+;       device : A  (0 = keyboard, 1 = Joystick 1, 2 = Joystick 2)
+;       return : A  (0 not pressed, non-zero pressed)
+; ----------------------------------------------------------
+CONTROLS_GetFire:
+	dec    a
+	jp     m, Keyboard_Fire
+	and    0x01
+	jp     nz, Joy2_Fire
+	ld     a, (joy1_state)
+	and    0x10
+	jr     z, Keyboard_Fire
+	ret
+Joy2_Fire:
+	ld     a, (joy2_state)
+	and    0x10
+	jr     z, Keyboard_Fire
+	ret
+Keyboard_Fire:
+	ld     a, (key_state)
+	and    0x10
+	ret
+
+; ----------------------------------------------------------
+; Read keyboard and check if RETURN is pressed
+;   uint8_t KEYBOARD_GetReturn(void)
+;       return : A
+; ----------------------------------------------------------
+
+KEYBOARD_GetReturn:
+	ld     a, (enter)
+	ld     b,a
+	xor    a
+	ld     (enter),a
+	ld     a, b
+	or     a
+	ret
+
+; ----------------------------------------------------------
+; Read keyboard and check for digits 1-8 being pressed
+;   uint8_t KEYBOARD_GetLevelSelect(void)
+;       return : A (Z flag set if no key was pressed)
+; ----------------------------------------------------------
+
+KEYBOARD_GetLevelSelect:
+	ld     a,(level)
+	ld     b,a
+	xor    a
+	ld     (level),a
+	ld     a,b
+	or     a
+	ret
+
+; ----------------------------------------------------------
+; Checks for Ctrl-R and PAUSE Keys. Ctrl-R Resets and PAUSE Pauses.
+;   void KEYBOARD_ResetAndPause(void)
+; ----------------------------------------------------------
+KEYBOARD_ResetAndPause:
+	ld     a, (reset)
+	or     a
+	jp     nz, Reset_ROM
+	ld     a, (pause)
+	or     a
+	ret    z
+	ld     e, 0x7f
+	ld     a, 0x07
+	call   PSG_WriteRegister
+	xor    a
+	ld     (pause), a
+	ld     a, (pause_led)
+	xor    0x20
+	ld     (pause_led), a
+	out    (0x00), a
+Pause_Loop:
+	ld     a, (pause)
+	or     a
+	nop
+	nop
+	ei
+	jr     z, Pause_Loop
+	xor    a
+	ld     (pause), a
+	ld     a, (pause_led)
+	xor    0x20
+	ld     (pause_led), a
+	out    (0x00), a
+	ret
+Reset_ROM:
+	ld     b,0x82
+	ld     c,0x01
+	call   VDP_SetRegister2
+	ld     e,0x7f
+	ld     a,0x07
+	call   PSG_WriteRegister
+	xor    a
+	ld     (reset), a
+	ld     (0xe00e), a
+	ld     hl, (MSX_INIT)
+	jp     (hl)                ; Jump to MSX ROM entry point
+
+pause_led: db 0x03
+
+; ----------------------------------------------------------
+; Write Value to PSG Register
+;   void PSG_WriteRegister(uint8_t register, uint8_t value)
+;       register : A
+;       value    : E
+; ----------------------------------------------------------
+PSG_WriteRegister:
+	out       (PSG_LATCH),a
+	push      af
+	ld        a,e
+	out       (PSG_WRITE),a
+	pop       af
+	ret
+
+; ----------------------------------------------------------
+; Read PSG Register
+;   uint8_t PSG_ReadRegister(uint8_t register)
+;       register : A
+;       return   : A
+; ----------------------------------------------------------
+PSG_ReadRegister:
+	out       (PSG_LATCH),a
+	in        a,(PSG_READ)
+	ret
+
+; ----------------------------------------------------------
+; Get VDP Status
+;   uint8_t VDP_GetStatus(void)
+;       return : A
+; ----------------------------------------------------------
+VDP_GetStatus:
+	in        a,(VDP_LATCH)
+	ret
+
+; ----------------------------------------------------------
+; Set VDP Registser
+;   void VDP_SetRegister2(uint8_t register, unit8_t value)
+;       register : C
+;       value    : B
+; ----------------------------------------------------------
+VDP_SetRegister2:
+	di
+	ld        a,b
+	out       (VDP_LATCH),a
+	ld        a,c
+	or        0x80
+	out       (VDP_LATCH),a
+	ei
+	ret
+
+; ---------------------------------------------------------
+; Read Data from VRAM
+;   void VDP_ReadVRAM(uint16_t address, uint16_t vram, uint16_t count)
+;       address : HL
+;       vram    : DE
+;       count   : BC
+; ---------------------------------------------------------
+VDP_ReadVRAM:
+	ex        de,hl
+	call      VDP_SetReadAddress
+	ex        de,hl
+	push      bc
+	pop       de
+	ld        a,e
+	or        a
+	jp        nz,VDP_ReadVRAM.1
+	dec       d
+VDP_ReadVRAM.1:
+	ld        b,e
+	ld        c,VDP_DATA
+VDP_ReadVRAM.2:
+	ini
+	jp        nz,VDP_ReadVRAM.2
+	dec       d
+	ret       m
+	jp        VDP_ReadVRAM.2
+
+; ---------------------------------------------------------
+; Set VDP VRAM Read Address
+;   void VDP_SetReadAddress(uint16_t address)
+;       address : HL
+; ---------------------------------------------------------
+VDP_SetReadAddress:
+	di
+	ld        a,l
+	out       (VDP_LATCH),a
+	ld        a,h
+	out       (VDP_LATCH),a
+	ei
+	ret
+
+; ---------------------------------------------------------
+; Write Data to VRAM
+;   void VDP_WriteVRAM(uint16_t address, uint16_t vram, uint16_t count)
+;       address : HL
+;       vram    : DE
+;       count   : BC
+; ---------------------------------------------------------
+VDP_WriteVRAM:
+	ex        de,hl
+	call      VDP_SetWriteAddress
+	ex        de,hl
+	push      bc
+	pop       de
+	ld        a,e
+	or        a
+	jp        nz,VDP_WriteVRAM.1
+	dec       d
+VDP_WriteVRAM.1:
+	ld        b,e
+	ld        c,VDP_DATA
+VDP_WriteVRAM.2:
+	outi
+	jp        nz,VDP_WriteVRAM.2
+	dec       d
+	ret       m
+	jp        VDP_WriteVRAM.2
+
+; ---------------------------------------------------------
+; Set VDP VRAM Write Address
+;   void VDP_SetWriteAddress(uint16_t address)
+;       address : HL
+; ---------------------------------------------------------
+VDP_SetWriteAddress:
+	di
+	ld        a,l
+	out       (VDP_LATCH),a
+	ld        a,h
+	or        0x40
+	out       (VDP_LATCH),a
+	ei
+	ret
+
+; ---------------------------------------------------------
+; Fill VRAM with a set value
+;   void VDP_FillVRAM(uint8_t value, uint16_t address, uint16_t count)
+;       value   : A
+;       address : HL
+;       count   : DE
+; ---------------------------------------------------------
+VDP_FillVRAM:
+	ld        b,a
+	call      VDP_SetWriteAddress
+	ld        a,e
+	or        a
+	jp        nz,VDP_FillVRAM.1
+	dec       d
+VDP_FillVRAM.1:
+	ld        a,b
+	ld        b,e
+VDP_FillVRAM.2:
+	out       (VDP_DATA),a
+	nop
+	dec       b
+	jp        nz,VDP_FillVRAM.2
+	dec       d
+	ret       m
+	jp        VDP_FillVRAM.2
+
+; ---------------------------------------------
+;     Interrupt Vector starts at 0xA000
+; ---------------------------------------------
+
+	ds    0xA000-$
+
+	dw    nullirq
+	dw    nullirq
+	dw    kbirq
+	dw    vbirq
+	dw    nullirq
+	dw    nullirq
+	dw    nullirq
+	dw    nullirq

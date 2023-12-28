@@ -3,11 +3,6 @@
 ;   NABU Conversion by Brian Johnson 2023
 ;
 ;
-; This currently is playable on metal, but has graphics
-; glitches along the shoreline. It does work fine under
-; emulation though. Unfortunately this makes it difficult
-; to debug the graphics errors in metal.
-;
 
 VDP_LATCH:    equ 0xa1
 VDP_DATA:     equ 0xa0
@@ -667,7 +662,7 @@ VDP_WriteVRAM.1:
 	ld        c,VDP_DATA
 VDP_WriteVRAM.2:
 	outi
-	jp        nz,VDP_WriteVRAM.2
+	jr        nz,VDP_WriteVRAM.2
 	dec       d
 	ret       m
 	jp        VDP_WriteVRAM.2

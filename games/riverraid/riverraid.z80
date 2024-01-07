@@ -15,7 +15,14 @@ MSX_INIT:     equ 0x4002
 
 VBLANK_FLAG:  equ 0xe347
 
+CPM:          equ 0
+
+if CPM
+org 0x0100
+else
 org 0x140d
+endif
+
 	nop
 	nop
 	nop

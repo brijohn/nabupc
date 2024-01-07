@@ -15,3 +15,5 @@ This is a conversion of the MSX port of RiverRaid to the NABU. It provides an as
  Copy the ROM image into the current directory and call it RiverRaid.rom
 
  To build a .nabu file run ```z80asm -o riverraid.nabu riverraid.z80```
+
+ To build a .com file edit the line ```CPM: equ 0``` to ```CPM: equ 1``` and run ```z80asm -o riverraid.com riverraid.z80```

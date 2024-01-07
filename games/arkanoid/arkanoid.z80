@@ -1,0 +1,678 @@
+;
+; Arkanoid Copyright Taito 1986
+;   NABU Conversion by Brian Johnson 2024
+;
+
+VDP_LATCH:    equ 0xa1
+VDP_DATA:     equ 0xa0
+
+PSG_LATCH:    equ 0x41
+PSG_WRITE:    equ 0x40
+PSG_READ:     equ 0x40
+
+MSX_INIT:     equ 0x4002
+
+CPM:          equ 0
+
+if CPM
+org 0x0100
+else
+org 0x140d
+endif
+	nop
+	nop
+	nop
+	jp     entry
+
+; ---------------------------------------------
+;     Interrupt Vector starts at 0x1500 (or 0x200)
+; ---------------------------------------------
+
+if CPM
+	ds    0x0200-$
+else
+	ds    0x1500-$
+endif
+
+	dw    nullirq
+	dw    nullirq
+	dw    keyboard_irq
+	dw    vblank_irq
+	dw    nullirq
+	dw    nullirq
+	dw    nullirq
+	dw    nullirq
+
+; ---------------------------------------------
+;     MSX Wrapper Entry Point
+; ---------------------------------------------
+
+entry:
+	di
+	ld     sp, 0xE000          ; Set temporary stack to high 8k of RAM
+	ld     a, 0x03
+	out    (0x00), a           ; Disable ROM
+
+	ld     hl, msxcode_end     ; Copy ROM code to 0x4000-0xbfff
+	ld     de, 0xBFFF
+	ld     bc, msxlength
+	lddr
+
+	call   splash              ; Display splash screen
+	call   patch               ; Patch ROM I/O accesses
+
+if CPM
+	ld     a, 0x02             ; Interrupt vector at address 0x0200
+else
+	ld     a, 0x15             ; Interrupt vector at address 0x1500
+endif
+	ld     i, a
+	im     2                   ; Interrupt Mode 2
+
+	ld     a, 0x07             ; I/O Port configuration register
+	out    (0x41), a
+	ld     a, 0x7F             ; Port A write, Port B read
+	out    (0x40), a
+	ld     a, 0x0E             ; I/O Port A register
+	out    (0x41), a
+	ld     a, 0x30             ; Enable VBlank and keyboard interrupt
+	out    (0x40), a
+
+	ld     hl, (MSX_INIT)
+	jp     (hl)                ; Jump to MSX ROM entry point
+
+; ---------------------------------------------
+;     ROM Patcher
+; ---------------------------------------------
+patch:
+	ld     ix, patch_table     ; Address of patch table
+apply_patch:
+	ld     l, (ix+0)
+	ld     h, (ix+1)           ; Load first word in table (address to patch)
+	ld     a, h
+	or     l
+	jr     z, patch_done       ; If address == 0 we are done
+	inc    ix
+	inc    ix                  ; Increment pointer to length byte for entry
+	ld     b, (ix+0)           ; B = number of bytes to patch
+patch_byte:
+	inc    ix                  ; IX = address of first patch byte in current entry
+	ld     a, (ix+0)           ; A = new value
+	ld     (hl), a             ; Update ROM with new byte value
+	inc    hl                  ; Increment patch address
+	djnz   patch_byte          ; Decrement B if not zero patch next byte in entry
+	inc    ix                  ; Move to next entry in patch table
+	jr     apply_patch         ; Apply next patch to ROM
+patch_done:
+	ret
+
+; ---------------------------------------------
+;     Table of patches to apply to ROM
+;        Entry format
+;         0  - Address to patch
+;         2  - Number of bytes
+;         3+ - List of bytes
+;     The last entry will have an address of 0
+; ---------------------------------------------
+
+patch_table:
+
+; ---------------------------------------------
+; Replace taito "vaus" paddle with nabu paddle
+; ---------------------------------------------
+	dw 0x42fc
+	db 3, 0xcd
+	dw get_paddle              ; call get_paddle
+
+	dw 0x433f
+	db 3, 0x22, 0xc1, 0xe0     ; ld (0xe0c1), hl
+
+; ---------------------------------------------
+; Fix cheats on NABU (only check two keys)
+; ---------------------------------------------
+	dw 0x42a4
+	db 3, 0x00, 0x00, 0x00
+
+	dw 0x42c2
+	db 3, 0x00, 0x00, 0x00
+
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	dw 0x402c
+	db 1, 0x5e
+
+; ---------------------------------------------
+; Patches PSG register access to use NABU port
+; ---------------------------------------------
+	dw 0xb58d
+	db 1, PSG_LATCH
+	dw 0xb591
+	db 1, PSG_WRITE
+
+; ---------------------------------------------
+; VDP.DW = VDP_DATA
+; ---------------------------------------------
+	dw 0x0007
+	db 1, VDP_DATA
+
+; ---------------------------------------------
+; Initialize KEYI hook to just rdvdp bios call
+; ---------------------------------------------
+	dw 0xfd9a
+	db 3, 0xc3
+	dw rdvdp
+
+; ---------------------------------------------
+; Patch in required BIOS call replacements
+; ---------------------------------------------
+	dw 0x0024                  ; ENASLT - Just return
+	db 1, 0xc9
+
+	dw 0x0138                  ; RSLREG - Just return
+	db 1, 0xc9
+
+	dw 0x0132                  ; CHGCAP - Just return
+	db 1, 0xc9
+
+	dw 0x0062                  ; CHGCLR - Just return
+	db 1, 0xc9
+
+	dw 0x0041
+	db 3, 0xc3
+	dw disscr
+
+	dw 0x0044
+	db 3, 0xc3
+	dw enascr
+
+	dw 0x0072
+	db 3, 0xc3
+	dw inigrp
+
+	dw 0x0056
+	db 3, 0xc3
+	dw filvrm
+
+	dw 0x005c
+	db 3, 0xc3
+	dw ldirvm
+
+	dw 0x0053
+	db 3, 0xc3
+	dw setwrt
+
+	dw 0x013e
+	db 3, 0xc3
+	dw rdvdp
+
+	dw 0x0141
+	db 3, 0xc3
+	dw snsmat
+
+	dw 0x004d
+	db 3, 0xc3
+	dw wrtvrm
+
+	dw 0x0096
+	db 3, 0xc3
+	dw rdpsg
+
+; End of patch table
+	dw 0
+	db 0
+
+; ---------------------------------------------
+; Splash Screen
+; ---------------------------------------------
+splash:
+; Initialize Screen Mode 2
+	call   inigrp
+; Load pattern generator from ROM
+	ld     hl, 0x9024
+	ld     de, 0x0000
+	ld     bc, 0x0800
+	call   ldirvm
+	ld     hl, 0x9024
+	ld     de, 0x0800
+	ld     bc, 0x0800
+	call   ldirvm
+	ld     hl, 0x9024
+	ld     de, 0x1000
+	ld     bc, 0x0800
+	call   ldirvm
+; Color Table - red text on black background
+	ld     a, 0x60
+	ld     hl, 0x2000
+	ld     bc, 0x1800
+	call   filvrm
+; Display splash screen message
+	ld     bc, 0x001b
+	ld     de, 0x1982
+	ld     hl,splash_msg
+	call   ldirvm
+; Delay Loop
+	xor    a
+	ld     b, 0x08
+	ld     d, a
+	ld     e, a
+delay_loop:
+	dec    de
+	ld     a, d
+	or     e
+	jr     nz, delay_loop
+	djnz   delay_loop
+	ret
+
+splash_msg: db "CONVERSION BY BRIAN JOHNSON"
+
+; ---------------------------------------------
+;     Stub IRQ Handler
+; ---------------------------------------------
+nullirq:
+	reti
+
+; ---------------------------------------------
+;     Keyboard Interrupt
+; ---------------------------------------------
+keyboard_irq:
+	push   af
+	push   bc
+	push   hl
+	ld     a, (controller)
+	cp     0x80
+	jr     z, handle_joystick
+	cp     0x84
+	jr     z, handle_paddle
+	in     a, (0x90)
+	cp     0x94
+	jr     z, kbirq_exit
+	cp     0x20
+	jr     z, space_pressed
+	cp     0x80
+	jr     z, controller_select
+	cp     0x84
+	jr     z, controller_select
+	cp     0xE0
+	call   nc, special_keys
+	jr     kbirq_exit
+handle_joystick:
+	in     a, (0x90)
+	and    0x1f
+	ld     (joystick_state), a
+	xor    a
+	ld     (controller), a
+	jr     kbirq_exit
+handle_paddle:
+	in     a, (0x90)
+	ld     b, a
+	and    0xf0
+	cp     0xd0
+	jr     z, paddle_finished
+	ld     a,b
+	and    0x0f
+	ld     (paddle_temp), a
+	jr     kbirq_exit
+paddle_finished:
+	sla    b
+	sla    b
+	sla    b
+	sla    b
+	ld     a, (paddle_temp)
+	or     b
+	ld     (paddle_value), a
+	xor    a
+	ld     (controller), a
+	jr     kbirq_exit
+controller_select:
+	ld     (controller), a
+	jr     kbirq_exit
+space_pressed:
+	ld     hl, row8
+	set    0, (hl)
+kbirq_exit:
+	pop    hl
+	pop    bc
+	pop    af
+	ei
+	reti
+
+special_keys:
+	ld     b, a
+	and    0x0f
+	ld     hl, row8
+	cp     0x00
+	jr     nz, left_arrow
+	ld     c, 0x7f
+left_arrow:
+	cp     0x01
+	jr     nz, up_arrow
+	ld     c, 0xef
+up_arrow:
+	cp     0x02
+	jr     nz, down_arrow
+	ld     c, 0xdf
+down_arrow:
+	cp     0x03
+	jr     nz, sym_key
+	ld     c, 0xbf
+sym_key:
+	cp     0x08
+	jr     nz, pause_key
+	ld     hl, row6
+	ld     c, 0xfb
+pause_key:
+	cp     0x09
+	jr     nz, set_bit
+	ld     hl, row7
+	ld     c, 0xef
+set_bit:
+	ld     a, (hl)
+	and    c
+	ld     (hl), a
+	bit    4, b
+	ret    nz
+	ld     a, c
+	cpl
+	ld     c, (hl)
+	or     c
+	ld     (hl), a
+	ret
+
+joystick_state:
+           db 0                ; Current joystick state (only used to read paddle trigger)
+paddle_value:
+           db 0                ; Current analog value of paddle
+row6:      db 0                ; Graph Key (SYM ON NABU)
+row7:      db 0                ; Stop Key (PAUSE on NABU)
+row8:      db 0                ; Arrows and Space
+
+controller:
+           db 0                ; Which controller are we handling (joystick, paddle or none)
+paddle_temp:
+           db 0                ; Temporary holder for low nibble until we get the high nibble
+
+; ---------------------------------------------
+;     Vertical Blank Interrupt
+; ---------------------------------------------
+vblank_irq:
+	push   hl
+	push   de
+	push   bc
+	push   af
+	exx
+	ex     af, af'
+	push   hl
+	push   de
+	push   bc
+	push   af
+	push   iy
+	push   ix
+	call   0xfd9a              ; KEYI Hook
+	pop    ix
+	pop    iy
+	pop    af
+	pop    bc
+	pop    de
+	pop    hl
+	exx
+	ex     af, af'
+	pop    af
+	pop    bc
+	pop    de
+	pop    hl
+	ei
+	reti
+
+
+; Get paddle State
+; HL = value (110-365)
+; A  = trigger state  (bit 1)
+get_paddle:
+	pop    bc
+	ld     bc, 0x433f          ; Return address - Skips now dead code
+	push   bc
+	ld     bc, 110             ; Adjust paddle range to be between 110-365
+	ld     a, (paddle_value)
+	ld     l, a
+	ld     h, 0
+	add    hl, bc
+	ld     a, (joystick_state)
+	rlca
+	and    0x02
+	cpl
+	ret
+
+; ==========================================================
+;  Mini CBIOS
+; ==========================================================
+
+; ----------------------------------------------------------
+; Blanks Screen
+;   void DISSCR(void)
+; ----------------------------------------------------------
+disscr:
+	ld     b, 0xa2
+	ld     c, 1
+	call   wrtvdp
+	ret
+
+; ----------------------------------------------------------
+; Enables Screen
+;   void ENASCR(void)
+; ----------------------------------------------------------
+enascr:
+	ld     b, 0xe2
+	ld     c, 1
+	call   wrtvdp
+	ret
+
+; ----------------------------------------------------------
+; Initializes Screen Mode 2
+;   void INIGRP(void)
+; ----------------------------------------------------------
+inigrp:
+	call   disscr
+
+	ld     hl, 0x1800
+	call   setwrt
+	ld     b, 3
+	ld     c, 0
+	xor    a
+	di
+inigrp.1:
+	out    (VDP_DATA), a
+	inc    c
+	jr     nz,inigrp.1
+	djnz   inigrp.1
+	ld     hl, mode2_regs
+	ld     bc, 8 * 0x100 + VDP_LATCH
+	ld     d, 0x80
+inigrp.2:
+	outi
+	ld     a, b
+	out    (c), d
+	inc    d
+	or     a
+	jr     nz, inigrp.2
+	ei
+
+	ld     a, 208
+	ld     hl, 0x1b00
+	call   wrtvrm
+
+	xor    a
+	ld     bc, 0x1800
+	ld     hl, 0x0000
+	ld     l, a
+	push   bc
+	call   filvrm
+	pop    bc
+	xor    a
+	ld     hl, 0x2000
+	call   filvrm
+
+	jp     enascr
+
+mode2_regs:
+	db 0x02                    ; R0: M3 = 1 (mode2)
+	db 0xa2                    ; R1: 16k, blank, irq, mode2, 16x16, 1X
+	db 0x06                    ; R2: name table = 0x1800
+	db 0xff                    ; R3: color table = 0x2000
+	db 0x03                    ; R4: pattern generator = 0x0000
+	db 0x36                    ; R5: sprite attribute table = 0x1b00
+	db 0x07                    ; R6: sprite pattern table = 0x3800
+	db 0x00                    ; R7: background, forground color = 0
+
+; ----------------------------------------------------------
+; Fill VRAM with a set value
+;   void FILVRM(uint8_t value, uint16_t address, uint16_t count)
+;       value   : A
+;       address : HL
+;       count   : BC
+; ----------------------------------------------------------
+filvrm:
+	push   af
+	call   setwrt
+	dec    bc
+	inc    c
+	ld     a, b
+	ld     b, c
+	ld     c, a
+	inc    c
+	pop    af
+filvrm.1:
+	out    (VDP_DATA), a
+	dec    b
+	jr     nz, filvrm.1
+	dec    c
+	jr     nz, filvrm.1
+	ret
+
+; ----------------------------------------------------------
+; Write Data to VRAM
+;   void LDIRVM(uint16_t address, uint16_t vram, uint16_t count)
+;       address : HL
+;       vram    : DE
+;       count   : BC
+; ----------------------------------------------------------
+ldirvm:
+	ex     de, hl
+	call   setwrt
+	ex     de, hl
+	push   bc
+	pop    de
+	ld     a, e
+	or     a
+	jp     nz, ldirvm.1
+	dec    d
+ldirvm.1:
+	ld     b, e
+	ld     c, VDP_DATA
+ldirvm.2:
+	outi
+	jr     nz, ldirvm.2
+	dec    d
+	ret    m
+	jp     ldirvm.2
+
+; ----------------------------------------------------------
+; Set VDP VRAM Write Address
+;   void SETWRT(uint16_t address)
+;       address : HL
+; ----------------------------------------------------------
+setwrt:
+	di
+	ld     a, l
+	out    (VDP_LATCH), a
+	ld     a, h
+	and    0x3f
+	or     0x40
+	out    (VDP_LATCH), a
+	ei
+	ret
+
+; ----------------------------------------------------------
+; Read VDP Status Register
+;   void RDVDP(void)
+;       return : A - vdp status
+; ----------------------------------------------------------
+rdvdp:
+	in     a, (VDP_LATCH)
+	ret
+
+; ----------------------------------------------------------
+; Write Byte to VRAM
+;   void WRTVRM(uint16_t address, uint8_t value)
+;       address : HL
+;       value   : A
+; ----------------------------------------------------------
+wrtvrm:
+	push   af
+	call   setwrt
+	pop    af
+	out    (VDP_DATA), a
+	ret
+
+; ----------------------------------------------------------
+; Set VDP Registser
+;   void WRTVDP(uint8_t register, unit8_t value)
+;       register : C
+;       value    : B
+; ----------------------------------------------------------
+wrtvdp:
+	di
+	ld     a, b
+	out    (VDP_LATCH), a
+	ld     a, c
+	or     0x80
+	out    (VDP_LATCH), a
+	ei
+	ret
+
+; ----------------------------------------------------------
+; Set VDP Registser
+;   void SNSMAT(uint8_t row)
+;       row    : A
+;       return : A - keyboard matrix row bitmap
+; ----------------------------------------------------------
+snsmat:
+	push  hl
+	cp    0x06
+	jp    nz, snsmat.7
+	ld    a, (row6)
+	jp    snsmat.ret
+snsmat.7:
+	cp    0x07
+	jp    nz, snsmat.8
+	ld    a, (row7)
+	jp    snsmat.ret
+snsmat.8:
+	cp    0x08
+	jp    nz, snsmat.none
+	ld    a, (row8)
+	ld    hl, row8
+	res   0, (hl)
+	jp    snsmat.ret
+snsmat.none:
+	ld    a, 0x00
+snsmat.ret:
+	cpl
+	pop   hl
+	ret
+
+; ----------------------------------------------------------
+; Read PSG Register
+;   void RDPSG(uint8_t register)
+;       register : A
+;       return   : A - register value
+; ----------------------------------------------------------
+rdpsg:
+	out    (PSG_LATCH), a
+	in     a, (PSG_READ)
+	ret
+
+; SHA1: 2183f07fa3ba87360100b2fa21fda0f55c0f8814
+msxcode:   incbin "arkanoid.rom"
+msxcode_end: equ $-1
+msxlength: equ $-msxcode

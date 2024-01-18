@@ -4,8 +4,6 @@
 
 This is a conversion of the MSX port of Arkanoid to the NABU. It provides an assembler wrapper that will load the original ROM into memory and then patch it to work on the NABU.
 
-This conversion supports both keyboard controls (Arrows + Space) and paddle controls if you are using either MAME or have a modified Atari paddle controller.
-
 ## Assemble
 
  In order to build the rom image, you will need:
@@ -18,6 +16,12 @@ This conversion supports both keyboard controls (Arrows + Space) and paddle cont
  To build a .nabu file run ```z80asm -o arkanoid.nabu arkanoid.z80```
 
  To build a .com file edit the line ```CPM: equ 0``` to ```CPM: equ 1``` and run ```z80asm -o arkanoid.com arkanoid.z80```
+
+## Controls
+
+Both keyboard controls (Arrows + Space) and paddle controls are supported.
+
+Paddles are supported under MAME, however if you are running on metal you will need to [modify](https://www.nabunetwork.com/download-manager.php?id=64) a set of Atari paddles to work with thw NABU.
 
 ## Cheats
 

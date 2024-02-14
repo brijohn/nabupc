@@ -92,6 +92,7 @@ inigrp_lp$:
 ; Setup Screen Mode 2
 ;   void SETGRP(void)
 ; ----------------------------------------------------------
+.global setgrp
 setgrp:
 	ld     a, (RG0SAV)
 	and    0xf1             ; MASK 11110001
@@ -101,7 +102,7 @@ setgrp:
 	call   wrtvdp          ; write VDP R#0
 
 	ld     a, (RG1SAV)
-	and    0xe7             ; MASK 11100111
+	and    0xe7            ; MASK 11100111
 	ld     b, a
 	inc    c
 	call   wrtvdp          ; write VDP R#1
@@ -116,6 +117,43 @@ setgrp:
 	ld     a, 0x7f
 	call   set_base_address
 	ld     a, 0x03
+	call   set_base_address
+	xor    a
+	call   set_base_address
+	xor    a
+	call   set_base_address
+	ret
+
+; ----------------------------------------------------------
+; Setup Screen Mode 3
+;   void SETMLT(void)
+; ----------------------------------------------------------
+.global setmlt
+setmlt:
+	ld     a, (RG0SAV)
+	and    0xf1
+	ld     b, a
+	ld     c, 0
+	call   wrtvdp
+
+	ld     a, (RG1SAV)
+	and    0xe7
+	or     0x08             ; M2 = 1
+	ld     b, a
+	inc    c
+	call   wrtvdp
+
+	; Set the base address registers. This works because MLTNAM,
+	; MLTCOL, MLTCGP, MLTATR and MLTPAT are in same order as the
+	; VDP base address registers.
+	ld     de, MLTNAM
+	ld     c, 2
+
+	xor    a
+	call   set_base_address
+	xor    a
+	call   set_base_address; TODO: Should we ignore MLTCOL?
+	xor    a
 	call   set_base_address
 	xor    a
 	call   set_base_address

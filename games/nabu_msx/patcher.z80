@@ -137,6 +137,18 @@ patch_table:
 	.byte 3, 0xc3
 	.word inigrp
 
+	.word 0x007e
+	.byte 3, 0xc3
+	.word setgrp
+
+	.word 0x0081
+	.byte 3, 0xc3
+	.word setmlt
+
+	.word 0x008a
+	.byte 3, 0xc3
+	.word gspsiz
+
 	.word 0x0056
 	.byte 3, 0xc3
 	.word filvrm

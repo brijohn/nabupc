@@ -1,0 +1,64 @@
+
+.section .rodata.patches, "adr
+.global rom_patch_table
+rom_patch_table:
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	.word 0x4009
+	.byte 1, 0x5e
+
+; ---------------------------------------------
+; Implement single button joystick control scheme
+; ---------------------------------------------
+	.word 0x41d9
+	.byte 4, 0xcd
+	.word patch_control_scheme
+	.byte 0x00
+
+; ---------------------------------------------
+; Patch check for infinite lives
+; ---------------------------------------------
+	.word 0x4657
+	.byte 3, 0xc3
+	.word infinite_lives_cheat
+
+	.word 0
+	.byte 0
+
+.section .text.patches, "acrx"
+; Single button control scheme
+patch_control_scheme:
+	bit    4, (iy+0x59)        ; Checks for FIRE button (0 == pressed)
+	ret    nz
+	ld     a, (0xe278)         ; Heading (00 = neutral, ff = left, 01 = right)
+	cp     0x00
+	jr     z, neutral
+	cp     0xff
+	jr     z, left
+	cp     0x01
+	jr     z, right
+left:
+	bit    3, (iy+0x59)        ; Checks RIGHT direction (0 == pressed)
+	ret
+right:
+	bit    2, (iy+0x59)        ; Checks LEFT direction (0 == pressed)
+	ret
+neutral:
+	bit    2, (iy+0x59)
+	ret    z
+	bit    3, (iy+0x59)
+	ret
+
+; Enable infinite lives
+infinite_lives_cheat:
+	ld     a, 0x07
+	call   snsmat
+	and    0x03
+	cp     0x00                ; Check if both YES and NO are pressed
+	ret    nz
+	set    6, (iy+0x1f)        ; If they are enable infinite lives
+	ret
+
+.section .msx, "acrx"
+.incbin "choplifter.rom"

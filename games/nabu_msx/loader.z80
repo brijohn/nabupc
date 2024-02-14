@@ -1,0 +1,47 @@
+.include "constants.inc"
+
+.set          MSX_END,   MSX_LOAD + msxlength - 1
+.set          MSX_INIT,  MSX_LOAD + 2
+
+.extern patch, splash
+.extern patch_table, rom_patch_table
+
+.section .crt0, "acrx"
+
+	nop
+	nop
+	nop
+	jp     entry
+
+entry:
+	di
+	ld     sp, 0xE000          ; Set temporary stack to high 8k of RAM
+	ld     a, 0x03
+	out    (0x00), a           ; Disable ROM
+	
+	ld     hl, msxcode_end - 1 ; Copy ROM code to 0x4000-0xbfff
+	ld     de, MSX_END
+	ld     bc, msxlength
+	lddr
+
+	call   splash              ; Display splash screen
+	ld     ix, patch_table
+	call   patch               ; Patch common MSX BIOS addresses
+	ld     ix, rom_patch_table
+	call   patch               ; Patch ROM addresses
+
+	ld     a, IM2_PAGE         ; Interrupt vector at address 0x1500
+	ld     i, a
+	im     2                   ; Interrupt Mode 2
+
+	ld     a, 0x07             ; I/O Port configuration register
+	out    (0x41), a
+	ld     a, 0x7F             ; Port A write, Port B read
+	out    (0x40), a
+	ld     a, 0x0E             ; I/O Port A register
+	out    (0x41), a
+	ld     a, 0x30             ; Enable VBlank and keyboard interrupt
+	out    (0x40), a
+	ei
+	ld     hl, (MSX_INIT)
+	jp     (hl)                ; Jump to MSX ROM entry point

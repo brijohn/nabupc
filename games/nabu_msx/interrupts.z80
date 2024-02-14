@@ -1,0 +1,214 @@
+
+.section .int_vec, "adr"
+
+	.word  nullirq
+	.word  nullirq
+	.word  keyboard_irq
+	.word  vblank_irq
+.rept 124
+	.word  nullirq
+.endr
+
+.section .text.interrupts, "acrx"
+.extern row6, row7, row8
+; ---------------------------------------------
+;     Stub IRQ Handler
+; ---------------------------------------------
+nullirq:
+	reti
+
+; ---------------------------------------------
+;     Keyboard Interrupt
+; ---------------------------------------------
+.weak keyboard_irq
+keyboard_irq:
+	push   af
+	push   bc
+	push   hl
+	ld     a, (controller)
+	cp     0x80
+	jr     z, handle_joystick
+	cp     0x84
+	jr     z, handle_paddle
+	in     a, (0x90)
+	cp     0x94
+	jr     z, kbirq_exit
+	cp     0x20
+	jr     z, space_pressed
+	cp     0x80
+	jr     z, controller_select
+	cp     0x84
+	jr     z, controller_select
+	cp     0xE0
+	call   nc, special_keys
+	jr     kbirq_exit
+handle_joystick:
+	in     a, (0x90)
+	ld     b, a
+	and    0x12
+	bit    0, b
+	jr     nz, joystick.left
+	bit    2, b
+	jr     nz, joystick.right
+	bit    3, b
+	jr     nz, joystick.up
+	jr     joystick.set
+joystick.right:
+	set    3, a
+	jr     joystick.set
+joystick.up:
+	set    0, a
+	jr     joystick.set
+joystick.left:
+	set    2, a
+joystick.set:
+	ld     (joystick_state), a
+	xor    a
+	ld     (controller), a
+	jr     kbirq_exit
+handle_paddle:
+	in     a, (0x90)
+	ld     b, a
+	and    0xf0
+	cp     0xd0
+	jr     z, paddle_finished
+	ld     a,b
+	and    0x0f
+	ld     (paddle_temp), a
+	jr     kbirq_exit
+paddle_finished:
+	sla    b
+	sla    b
+	sla    b
+	sla    b
+	ld     a, (paddle_temp)
+	or     b
+	ld     (paddle_value), a
+	xor    a
+	ld     (controller), a
+	jr     kbirq_exit
+controller_select:
+	ld     (controller), a
+	jr     kbirq_exit
+space_pressed:
+	ld     hl, row8
+	set    0, (hl)
+	ld     a, 1
+	ld     (fire_delay), a     ; Delay counter till FIRE key gets released
+kbirq_exit:
+	pop    hl
+	pop    bc
+	pop    af
+	ei
+	reti
+
+special_keys:
+	ld     b, a
+	and    0x0f
+	ld     hl, row8
+	cp     0x00
+	jr     nz, left_arrow
+	ld     c, 0x7f
+left_arrow:
+	cp     0x01
+	jr     nz, up_arrow
+	ld     c, 0xef
+up_arrow:
+	cp     0x02
+	jr     nz, down_arrow
+	ld     c, 0xdf
+down_arrow:
+	cp     0x03
+	jr     nz, sym_key
+	ld     c, 0xbf
+sym_key:
+	cp     0x08
+	jr     nz, pause_key
+	ld     hl, row6
+	ld     c, 0xfb
+pause_key:
+	cp     0x09
+	jr     nz, no_key
+	ld     hl, row7
+	ld     c, 0xef
+no_key:
+	cp     0x06
+	jr     nz, yes_key
+	ld     hl, row7
+	ld     c, 0xfe
+yes_key:
+	cp     0x07
+	jr     nz, set_bit
+	ld     hl, row7
+	ld     c, 0xfd
+set_bit:
+	ld     a, (hl)
+	and    c
+	ld     (hl), a
+	bit    4, b
+	ret    nz
+	ld     a, c
+	cpl
+	ld     c, (hl)
+	or     c
+	ld     (hl), a
+	ret
+
+
+; ---------------------------------------------
+;     Vertical Blank Interrupt
+; ---------------------------------------------
+.weak vblank_irq
+vblank_irq:
+	push   hl
+	push   de
+	push   bc
+	push   af
+	exx
+	ex     af, af'
+	push   hl
+	push   de
+	push   bc
+	push   af
+	push   iy
+	push   ix
+	ld     a, (fire_delay)
+	cp     0
+	jr     z, keyi_hook        ; If fire_delay is 0, skip
+	inc    a                   ; Increment fire_delay
+	and    0x07                ; fire_delay mod 15
+	ld     (fire_delay), a     ; Update fire_delay
+	cp     0
+	jr     nz, keyi_hook       ; If fire_delay has not wrapped back to 0, skip
+	ld     hl, row8
+	res    0, (hl)             ; Else reset keyboard fire button state
+keyi_hook:
+	call   0xfd9a              ; KEYI Hook
+	pop    ix
+	pop    iy
+	pop    af
+	pop    bc
+	pop    de
+	pop    hl
+	exx
+	ex     af, af'
+	pop    af
+	pop    bc
+	pop    de
+	pop    hl
+	ei
+	reti
+
+
+.section  .data.interrupts, "adrw"
+.global joystick_state, paddle_value
+joystick_state:
+	.byte 0                ; Current joystick state
+paddle_value:
+	.byte 0                ; Current analog value of paddle
+fire_delay:
+	.byte 0                ; Counter for space key release
+controller:
+	.byte 0                ; Which controller are we handling (joystick, keyboard)
+paddle_temp:
+	.byte 0                ; Temporary holder for low nibble until we get the high nibble

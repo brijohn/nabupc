@@ -1,0 +1,282 @@
+.include "constants.inc"
+
+.section .text.cbios, "acrx"
+.extern joystick_state
+; ==========================================================
+;  Mini CBIOS
+; ==========================================================
+
+; ----------------------------------------------------------
+; Blanks Screen
+;   void DISSCR(void)
+; ----------------------------------------------------------
+.global disscr
+disscr:
+	ld     b, 0xa2
+	ld     c, 1
+	call   wrtvdp
+	ret
+
+; ----------------------------------------------------------
+; Enables Screen
+;   void ENASCR(void)
+; ----------------------------------------------------------
+.global enascr
+enascr:
+	ld     b, 0xe2
+	ld     c, 1
+	call   wrtvdp
+	ret
+
+; ----------------------------------------------------------
+; Initializes Screen Mode 2
+;   void INIGRP(void)
+; ----------------------------------------------------------
+.global inigrp
+inigrp:
+	call   disscr
+
+	ld     hl, 0x1800
+	call   setwrt
+	ld     b, 3
+	ld     c, 0
+	xor    a
+	di
+inigrp.1:
+	out    (VDP_DATA), a
+	inc    c
+	jr     nz,inigrp.1
+	djnz   inigrp.1
+	ld     hl, mode2_regs
+	ld     bc, 8 * 0x100 + VDP_LATCH
+	ld     d, 0x80
+inigrp.2:
+	outi
+	ld     a, b
+	out    (c), d
+	inc    d
+	or     a
+	jr     nz, inigrp.2
+	ei
+
+	ld     a, 208
+	ld     hl, 0x1b00
+	call   wrtvrm
+
+	xor    a
+	ld     bc, 0x1800
+	ld     hl, 0x0000
+	ld     l, a
+	push   bc
+	call   filvrm
+	pop    bc
+	xor    a
+	ld     hl, 0x2000
+	call   filvrm
+
+	jp     enascr
+
+
+; ----------------------------------------------------------
+; Fill VRAM with a set value
+;   void FILVRM(uint8_t value, uint16_t address, uint16_t count)
+;       value   : A
+;       address : HL
+;       count   : BC
+; ----------------------------------------------------------
+.global filvrm
+filvrm:
+	push   af
+	call   setwrt
+	dec    bc
+	inc    c
+	ld     a, b
+	ld     b, c
+	ld     c, a
+	inc    c
+	pop    af
+filvrm.1:
+	out    (VDP_DATA), a
+	dec    b
+	jr     nz, filvrm.1
+	dec    c
+	jr     nz, filvrm.1
+	ret
+
+; ----------------------------------------------------------
+; Write Data to VRAM
+;   void LDIRVM(uint16_t address, uint16_t vram, uint16_t count)
+;       address : HL
+;       vram    : DE
+;       count   : BC
+; ----------------------------------------------------------
+.global ldirvm
+ldirvm:
+	ex     de, hl
+	call   setwrt
+	ex     de, hl
+	push   bc
+	pop    de
+	ld     a, e
+	or     a
+	jp     nz, ldirvm.1
+	dec    d
+ldirvm.1:
+	ld     b, e
+	ld     c, VDP_DATA
+ldirvm.2:
+	outi
+	jr     nz, ldirvm.2
+	dec    d
+	ret    m
+	jp     ldirvm.2
+
+; ----------------------------------------------------------
+; Set VDP VRAM Write Address
+;   void SETWRT(uint16_t address)
+;       address : HL
+; ----------------------------------------------------------
+.global setwrt
+setwrt:
+	di
+	ld     a, l
+	out    (VDP_LATCH), a
+	ld     a, h
+	and    0x3f
+	or     0x40
+	out    (VDP_LATCH), a
+	ei
+	ret
+
+; ----------------------------------------------------------
+; Read VDP Status Register
+;   void RDVDP(void)
+;       return : A - vdp status
+; ----------------------------------------------------------
+.global rdvdp
+rdvdp:
+	in     a, (VDP_LATCH)
+	ret
+
+; ----------------------------------------------------------
+; Write Byte to VRAM
+;   void WRTVRM(uint16_t address, uint8_t value)
+;       address : HL
+;       value   : A
+; ----------------------------------------------------------
+.global wrtvrm
+wrtvrm:
+	push   af
+	call   setwrt
+	pop    af
+	out    (VDP_DATA), a
+	ret
+
+; ----------------------------------------------------------
+; Set VDP Registser
+;   void WRTVDP(uint8_t register, unit8_t value)
+;       register : C
+;       value    : B
+; ----------------------------------------------------------
+.global wrtvdp
+wrtvdp:
+	di
+	ld     a, b
+	out    (VDP_LATCH), a
+	ld     a, c
+	or     0x80
+	out    (VDP_LATCH), a
+	ei
+	ret
+
+; ----------------------------------------------------------
+; Set VDP Registser
+;   void SNSMAT(uint8_t row)
+;       row    : A
+;       return : A - keyboard matrix row bitmap
+; ----------------------------------------------------------
+.global snsmat
+snsmat:
+	push   hl
+	push   bc
+	cp     0x09
+	jr     nc, snsmat.1
+	ld     hl, row0
+	ld     b, 0x00
+	ld     c, a
+	add    hl, bc
+	ld     a, (hl)
+	jr     snsmat.2
+snsmat.1:
+	xor    a
+snsmat.2:
+	cpl
+	pop    bc
+	pop    hl
+	ret
+
+; ----------------------------------------------------------
+; Read PSG Register
+;   uint8_t RDPSG(uint8_t register)
+;       register : A
+;       return   : A - register value
+; ----------------------------------------------------------
+.global rdpsg
+rdpsg:
+	cp     0x0e
+	jr     nz, rdpsg.1
+	ld     a, (joystick_state)
+	cpl
+	ret
+rdpsg.1:
+	out    (PSG_LATCH), a
+	in     a, (PSG_READ)
+	ret
+
+; ----------------------------------------------------------
+; Write PSG Register
+;   void WRTPSG(uint8_t register, uint8_t value)
+;       register : A
+;       value    : E
+; ----------------------------------------------------------
+.global wrtpsg
+wrtpsg:
+	cp     0x0f
+	ret    z
+	di
+	out    (PSG_LATCH), a
+	push   af
+	cp     0x07
+	ld     a, e
+	jr     nz, wrtpsg.1
+	and    0x3f
+	or     0x40
+wrtpsg.1:
+	out    (PSG_WRITE), a
+	ei
+	pop    af
+	ret
+
+.section .rodata.cbios, "adr"
+mode2_regs:
+	.byte 0x02                    ; R0: M3 = 1 (mode2)
+	.byte 0xa2                    ; R1: 16k, blank, irq, mode2, 16x16, 1X
+	.byte 0x06                    ; R2: name table = 0x1800
+	.byte 0xff                    ; R3: color table = 0x2000
+	.byte 0x03                    ; R4: pattern generator = 0x0000
+	.byte 0x36                    ; R5: sprite attribute table = 0x1b00
+	.byte 0x07                    ; R6: sprite pattern table = 0x3800
+	.byte 0x00                    ; R7: background, forground color = 0
+.section .data.cbios, "adrw"
+; MSX Keyboard Matrix Rows
+.global row0, row1, row2, row3, row4, row5, row6, row7, row8
+row0:      .byte 0
+row1:      .byte 0
+row2:      .byte 0
+row3:      .byte 0
+row4:      .byte 0
+row5:      .byte 0
+row6:      .byte 0
+row7:      .byte 0  ; Stop Key (PAUSE on NABU)
+row8:      .byte 0  ; Arrows and Space
+

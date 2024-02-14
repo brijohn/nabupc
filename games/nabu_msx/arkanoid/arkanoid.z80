@@ -1,0 +1,67 @@
+.include "constants.inc"
+
+.section .rodata.patches, "adr
+.global rom_patch_table
+rom_patch_table:
+; ---------------------------------------------
+; Replace taito "vaus" paddle with nabu paddle
+; ---------------------------------------------
+	.word 0x42fc
+	.byte 3, 0xcd
+	.word get_paddle              ; call get_paddle
+
+	.word 0x433f
+	.byte 3, 0x22, 0xc1, 0xe0     ; ld (0xe0c1), hl
+
+; ---------------------------------------------
+; Fix cheats on NABU (only check two keys)
+; ---------------------------------------------
+	.word 0x42a4
+	.byte 3, 0x00, 0x00, 0x00
+
+	.word 0x42c2
+	.byte 3, 0x00, 0x00, 0x00
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	.word 0x402c
+	.byte 1, 0x5e
+
+; ---------------------------------------------
+; Patches PSG register access to use NABU port
+; ---------------------------------------------
+	.word 0xb58d
+	.byte 1, PSG_LATCH
+	.word 0xb591
+	.byte 1, PSG_WRITE
+
+	.word 0
+	.byte 0
+
+.section .rodata.splash, "adr"
+.global splash_msg
+splash_msg:
+	.byte 2, 12, 0x1b, "Conversion by Brian Johnson"
+	.byte 0, 0, 0
+
+.section .text.patches, "acrx"
+; Get paddle State
+; HL = value (110-365)
+; A  = trigger state  (bit 1)
+get_paddle:
+	pop    bc
+	ld     bc, 0x433f          ; Return address - Skips now dead code
+	push   bc
+	ld     bc, 110             ; Adjust paddle range to be between 110-365
+	ld     a, (paddle_value)
+	ld     l, a
+	ld     h, 0
+	add    hl, bc
+	ld     a, (joystick_state)
+	rrca
+	and    0x02
+	cpl
+	ret
+
+.section .msx, "acrx"
+.incbin "arkanoid.rom"

@@ -1,0 +1,144 @@
+.include "constants.inc"
+.extern rdvdp
+
+.section .text.patcher, "acrx"
+; ---------------------------------------------
+;     ROM Patcher
+; ---------------------------------------------
+.global patch
+patch:
+apply_patch:
+	ld     l, (ix+0)
+	ld     h, (ix+1)           ; Load first word in table (address to patch)
+	ld     a, h
+	or     l
+	jr     z, patch_done       ; If address == 0 we are done
+	inc    ix
+	inc    ix                  ; Increment pointer to length byte for entry
+	ld     b, (ix+0)           ; B = number of bytes to patch
+patch_byte:
+	inc    ix                  ; IX = address of first patch byte in current entry
+	ld     a, (ix+0)           ; A = new value
+	ld     (hl), a             ; Update ROM with new byte value
+	inc    hl                  ; Increment patch address
+	djnz   patch_byte          ; Decrement B if not zero patch next byte in entry
+	inc    ix                  ; Move to next entry in patch table
+	jr     apply_patch         ; Apply next patch to ROM
+patch_done:
+	ret
+
+
+.section .rodata.patches, "adr"
+; ---------------------------------------------
+;     Table of patches to apply to ROM
+;        Entry format
+;         0  - Address to patch
+;         2  - Number of bytes
+;         3+ - List of bytes
+;     The last entry will have an address of 0
+; ---------------------------------------------
+.global patch_table
+patch_table:
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	.word 0x4009
+	.byte 1, 0x5e
+
+; ---------------------------------------------
+; Address of MSX font
+; ---------------------------------------------
+	.word 0x0004
+	.byte 2
+	.word msx_font
+
+; ---------------------------------------------
+; VDP.DR = VDP_DATA
+; ---------------------------------------------
+	.word 0x0006
+	.byte 1, VDP_DATA
+
+; ---------------------------------------------
+; VDP.DW = VDP_DATA
+; ---------------------------------------------
+	.word 0x0007
+	.byte 1, VDP_DATA
+
+; ---------------------------------------------
+; Initialize KEYI hook to just rdvdp bios call
+; ---------------------------------------------
+	.word 0xfd9a
+	.byte 3, 0xc3
+	.word rdvdp
+
+	.word 0x0024                  ; ENASLT - Just return
+	.byte 1, 0xc9
+
+	.word 0x0138                  ; RSLREG - Just return
+	.byte 1, 0xc9
+
+	.word 0x013b                  ; WSLREG - Just return
+	.byte 1, 0xc9
+
+	.word 0x0132                  ; CHGCAP - Just return
+	.byte 1, 0xc9
+
+	.word 0x0062                  ; CHGCLR - Just return
+	.byte 1, 0xc9
+
+	.word 0x0041
+	.byte 3, 0xc3
+	.word disscr
+
+	.word 0x0044
+	.byte 3, 0xc3
+	.word enascr
+
+	.word 0x0072
+	.byte 3, 0xc3
+	.word inigrp
+
+	.word 0x0056
+	.byte 3, 0xc3
+	.word filvrm
+
+	.word 0x005c
+	.byte 3, 0xc3
+	.word ldirvm
+
+	.word 0x0053
+	.byte 3, 0xc3
+	.word setwrt
+
+	.word 0x013e
+	.byte 3, 0xc3
+	.word rdvdp
+
+	.word 0x0141
+	.byte 3, 0xc3
+	.word snsmat
+
+	.word 0x0047
+	.byte 3, 0xc3
+	.word wrtvdp
+
+	.word 0x004d
+	.byte 3, 0xc3
+	.word wrtvrm
+
+	.word 0x0093
+	.byte 3, 0xc3
+	.word wrtpsg
+
+	.word 0x0096
+	.byte 3, 0xc3
+	.word rdpsg
+
+	.word 0
+	.byte 0
+
+
+.weak rom_patch_table
+rom_patch_table:
+	.word 0
+	.byte 0

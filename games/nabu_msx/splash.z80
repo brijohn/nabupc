@@ -1,0 +1,77 @@
+.extern inigrp, ldirvm, filvrm, msx_font
+
+.section .text.splash, "acrx"
+.global splash
+splash:
+; Initialize Screen Mode 2
+	call   inigrp
+; Load MSX Font Patterns
+	ld     hl, msx_font
+	ld     de, 0x0000
+	ld     bc, 0x0800
+	call   ldirvm
+	ld     hl, msx_font
+	ld     de, 0x0800
+	ld     bc, 0x0800
+	call   ldirvm
+	ld     hl, msx_font
+	ld     de, 0x1000
+	ld     bc, 0x0800
+	call   ldirvm
+; Color Table - red text on black background
+	ld     a, 0x60
+	ld     hl, 0x2000
+	ld     bc, 0x1800
+	call   filvrm
+; Display splash screen message
+	ld     bc, 0
+	ld     ix, splash_msg
+next_line:
+	ld     a, (ix + 2)
+	cp     0
+	jr     z, delay
+	ld     c, a
+	ld     de, 0x1800
+	ld     h, 0
+	ld     l, (ix + 1)
+	ld     a, (ix + 0)
+	add    hl, hl
+	add    hl, hl
+	add    hl, hl
+	add    hl, hl
+	add    hl, hl
+	add    a, l
+	ld     l, a
+	adc    a, h
+	sub    l
+	ld     h, a
+	add    hl, de
+	ex     de, hl
+	inc    ix
+	inc    ix
+	inc    ix
+	push   ix
+	pop    hl
+	push   bc
+	call   ldirvm
+	pop    bc
+	add    ix, bc
+	jr     next_line
+delay:
+; Delay Loop
+	xor    a
+	ld     b, 0x08
+	ld     d, a
+	ld     e, a
+delay_loop:
+	dec    de
+	ld     a, d
+	or     e
+	jr     nz, delay_loop
+	djnz   delay_loop
+	ret
+
+.section .rodata.splash, "adr"
+.weak splash_msg
+splash_msg:
+	.byte 0, 0, 0

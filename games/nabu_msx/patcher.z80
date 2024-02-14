@@ -71,6 +71,44 @@ patch_table:
 	.byte 3, 0xc3
 	.word rdvdp
 
+; ---------------------------------------------
+; Setup Mode 2 Addresses
+; ---------------------------------------------
+	.word RG0SAV
+	.byte 1, 0x02
+
+	.word RG1SAV
+	.byte 1, 0xe2
+
+	.word GRPNAM
+	.byte 2
+	.word 0x1800
+
+	.word GRPCOL
+	.byte 2
+	.word 0x2000
+
+	.word GRPCGP
+	.byte 2
+	.word 0x0000
+
+	.word GRPATR
+	.byte 2
+	.word 0x1b00
+
+	.word GRPPAT
+	.byte 2
+	.word 0x3800
+
+	.word FORCLR
+	.byte 1, 0x00
+
+	.word BDRCLR
+	.byte 1, 0x00
+
+; ---------------------------------------------
+; Setup CBIOS calls
+; ---------------------------------------------
 	.word 0x0024                  ; ENASLT - Just return
 	.byte 1, 0xc9
 
@@ -83,8 +121,9 @@ patch_table:
 	.word 0x0132                  ; CHGCAP - Just return
 	.byte 1, 0xc9
 
-	.word 0x0062                  ; CHGCLR - Just return
-	.byte 1, 0xc9
+	.word 0x0062
+	.byte 3, 0xc3
+	.word chgclr
 
 	.word 0x0041
 	.byte 3, 0xc3

@@ -12,7 +12,9 @@
 ; ----------------------------------------------------------
 .global disscr
 disscr:
-	ld     b, 0xa2
+	ld     a, (RG1SAV)
+	and    0xbf
+	ld     b, a
 	ld     c, 1
 	call   wrtvdp
 	ret
@@ -23,10 +25,30 @@ disscr:
 ; ----------------------------------------------------------
 .global enascr
 enascr:
-	ld     b, 0xe2
+	ld     a, (RG1SAV)
+	or     0x40
+	ld     b, a
 	ld     c, 1
 	call   wrtvdp
 	ret
+
+
+chgmod_finish:
+                ; Write new values from system RAM to the VDP.
+	di
+                ; Write R#0 - R#7.
+	ld     hl, RG0SAV
+	ld     bc, 8 * 0x100 + VDP_LATCH
+	ld     d, 0x80
+chgmod_finish_lp$:
+	outi
+	ld     a, b
+	out    (c), d
+	inc    d
+	or     a
+	jr     nz, chgmod_finish_lp$
+	ei
+	jp     enascr
 
 ; ----------------------------------------------------------
 ; Initializes Screen Mode 2
@@ -36,45 +58,119 @@ enascr:
 inigrp:
 	call   disscr
 
-	ld     hl, 0x1800
+	ld     a, 2
+	ld     (SCRMOD), a
+	call   chgclr
+
+	ld     hl, (GRPNAM)
+	ld     (NAMBAS), hl
 	call   setwrt
 	ld     b, 3
 	ld     c, 0
 	xor    a
 	di
-inigrp.1:
+inigrp_lp$:
 	out    (VDP_DATA), a
 	inc    c
-	jr     nz,inigrp.1
-	djnz   inigrp.1
-	ld     hl, mode2_regs
-	ld     bc, 8 * 0x100 + VDP_LATCH
-	ld     d, 0x80
-inigrp.2:
-	outi
-	ld     a, b
-	out    (c), d
-	inc    d
-	or     a
-	jr     nz, inigrp.2
+	jr     nz, inigrp_lp$
+	djnz   inigrp_lp$
 	ei
 
-	ld     a, 208
-	ld     hl, 0x1b00
-	call   wrtvrm
+	ld     hl, (GRPCGP)
+	ld     (CGPBAS), hl
+	ld     hl, (GRPATR)
+	ld     (ATRBAS), hl
+	ld     hl, (GRPPAT)
+	ld     (PATBAS), hl
 
+	call    setgrp
+	call    clrspr_attr
+	call    cls_screen2
+	jp      chgmod_finish
+
+; ----------------------------------------------------------
+; Setup Screen Mode 2
+;   void SETGRP(void)
+; ----------------------------------------------------------
+setgrp:
+	ld     a, (RG0SAV)
+	and    0xf1             ; MASK 11110001
+	or     0x02             ; M3 = 1
+	ld     b, a
+	ld     c, 0
+	call   wrtvdp          ; write VDP R#0
+
+	ld     a, (RG1SAV)
+	and    0xe7             ; MASK 11100111
+	ld     b, a
+	inc    c
+	call   wrtvdp          ; write VDP R#1
+
+	; Set the base address registers. This works because GRPNAM,
+	; GRPCOL, GRPCGP, GRPATR and GRPPAT are in same order as the
+	; VDP base address registers.
+	ld     de, GRPNAM
+	ld     c, 2
 	xor    a
-	ld     bc, 0x1800
-	ld     hl, 0x0000
+	call   set_base_address
+	ld     a, 0x7f
+	call   set_base_address
+	ld     a, 0x03
+	call   set_base_address
+	xor    a
+	call   set_base_address
+	xor    a
+	call   set_base_address
+	ret
+
+; ----------------------------------------------------------
+; Changes Screen Colors
+;   void CHGCLR(void)
+; ----------------------------------------------------------
+.global chgclr
+chgclr:
+	ld     a, (SCRMOD)
+	dec    a
+	push   af
+	ld     a, (FORCLR)
+	rlca
+	rlca
+	rlca
+	rlca
+	and    0xf0
 	ld     l, a
-	push   bc
-	call   filvrm
-	pop    bc
-	xor    a
-	ld     hl, 0x2000
-	call   filvrm
+	ld     a, (BDRCLR)
+	or     l
 
-	jp     enascr
+	ld     b, a
+	ld     c, 7
+	call   wrtvdp
+	pop    af
+	ret    nz
+
+	; SCREEN1
+	ld     a, (FORCLR)
+	rlca
+	rlca
+	rlca
+	rlca
+	and    0xf0
+	ld     hl, BAKCLR
+	or     (hl)
+	ld     hl, (T32COL)
+	ld     bc, 0x0020
+	push   af
+	call   setwrt
+cclr_lp:
+	pop    af
+	out    (VDP_DATA), a
+	push   af
+	dec    bc
+	ld     a, b
+	or     c
+	jr     nz, cclr_lp
+	pop    af
+	ret
 
 
 ; ----------------------------------------------------------
@@ -187,10 +283,32 @@ wrtvdp:
 	or     0x80
 	out    (VDP_LATCH), a
 	ei
+	push   hl
+	ld     hl, RG0SAV
+	ld     a, b
+	ld     b, 0
+	add    hl, bc
+	ld     (hl), a
+	pop    hl
 	ret
 
 ; ----------------------------------------------------------
-; Set VDP Registser
+; Get Sprite Size
+;   uint8_t GSPSIZ(void)
+;        return : A - Size of sprite (8 or 32)
+; ----------------------------------------------------------
+.global gspsiz
+gspsiz:
+	ld     a, (RG1SAV)
+	rrca
+	rrca
+	ld     a, 8
+	ret    nc
+	ld     a, 32
+	ret
+
+; ----------------------------------------------------------
+; Read Keyboard Matrix Row
 ;   void SNSMAT(uint8_t row)
 ;       row    : A
 ;       return : A - keyboard matrix row bitmap
@@ -257,7 +375,103 @@ wrtpsg.1:
 	pop    af
 	ret
 
+; ----------------------------------------------------------
+; Internal CBIOS Functions
+; ----------------------------------------------------------
+clrspr_attr:
+	ld     e, 209           ; Y coordinate
+	ld     hl, (ATRBAS)
+	call   setwrt
+	ld     a, (FORCLR)
+	ld     d, a
+	ld     bc, 0x2000       ; B = 32 = counter, C = pattern index
+	di
+clrspr_attr_lp$:
+	ld     a, e
+	out    (VDP_DATA), a    ; Y coordinate
+	ld     a, 0
+	nop                     ; wait (at least) 29 t-states between VRAM accesses
+	nop                     ; only 2 nops, as ld a,0 is slow
+	out    (VDP_DATA), a    ; X coordinate
+	ld     a, c
+	nop                     ; wait (at least) 29 t-states between VRAM accesses
+	nop
+	nop
+	out    (VDP_DATA), a    ; pattern number
+	inc    c
+	call   gspsiz
+	jr     nc, clrspr_attr_8$
+	inc    c
+	inc    c
+	inc    c
+clrspr_attr_8$:
+	ld     a, d
+	out    (VDP_DATA), a    ; color
+	djnz   clrspr_attr_lp$
+	ei
+	ret
+
+cls_screen2:
+	xor    a
+	ld     bc, 0x1800
+	ld     hl, (CGPBAS)
+	ld     l, a
+	push   bc
+	call   filvrm
+	pop    bc
+	ld     a, (BAKCLR)
+	ld     hl, (GRPCOL)
+	jp     filvrm
+
+cls_screen3:
+	ld     a, (BAKCLR)
+	and    0x0F
+	ld     b, a
+	rlca
+	rlca
+	rlca
+	rlca
+	or     b
+	ld     bc, 0x800
+	ld     hl, (CGPBAS)
+	jp     filvrm
+
+set_base_address:
+	push   de
+	push   af
+	; Get the shift value.
+	ld     hl, set_base_address_table
+	ld     b, 0
+	add    hl, bc
+	ld     b, (hl)
+	; Get the address from (HL) to HL.
+	ex     de, hl
+	ld     a, (hl)
+	inc    hl
+	ld     h, (hl)
+	ld     l, a
+	; Shift it to left in register A. After this A contains the
+	; converted address.
+set_base_address_loop$:
+	add    hl, hl
+	adc    a, a
+	djnz   set_base_address_loop$
+	ld     b, a
+	; Set the base address register.
+	pop    af
+	or     b
+	ld     b, a
+	call   wrtvdp
+	; Increase pointer and register number.
+	pop    de
+	inc    de
+	inc    de
+	inc    c
+	ret
+
 .section .rodata.cbios, "adr"
+set_base_address_table:
+	.byte 0x00,0x00,0x06,0x0A,0x05,0x09,0x05
 mode2_regs:
 	.byte 0x02                    ; R0: M3 = 1 (mode2)
 	.byte 0xa2                    ; R1: 16k, blank, irq, mode2, 16x16, 1X
@@ -267,6 +481,7 @@ mode2_regs:
 	.byte 0x36                    ; R5: sprite attribute table = 0x1b00
 	.byte 0x07                    ; R6: sprite pattern table = 0x3800
 	.byte 0x00                    ; R7: background, forground color = 0
+
 .section .data.cbios, "adrw"
 ; MSX Keyboard Matrix Rows
 .global row0, row1, row2, row3, row4, row5, row6, row7, row8

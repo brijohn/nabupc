@@ -24,11 +24,11 @@ entry:
 	ld     bc, msxlength
 	lddr
 
-	call   splash              ; Display splash screen
 	ld     ix, patch_table
 	call   patch               ; Patch common MSX BIOS addresses
 	ld     ix, rom_patch_table
 	call   patch               ; Patch ROM addresses
+	call   splash              ; Display splash screen
 
 	ld     a, IM2_PAGE         ; Interrupt vector at address 0x1500
 	ld     i, a

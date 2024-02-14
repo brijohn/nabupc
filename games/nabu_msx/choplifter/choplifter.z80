@@ -26,6 +26,12 @@ rom_patch_table:
 	.word 0
 	.byte 0
 
+.section .rodata.splash, "adr"
+.global splash_msg
+splash_msg:
+	.byte 2, 12, 0x1b, "Conversion by Brian Johnson"
+	.byte 0, 0, 0
+
 .section .text.patches, "acrx"
 ; Single button control scheme
 patch_control_scheme:

@@ -2,7 +2,7 @@
 ASM        = vasmz80_std
 LINK       = vlink
 ASM_FLAGS  = -Fvobj -DMSX_LOAD=0x4000
-LINK_FLAGS = -brawbin1 -Tvlink_nabu.cmd
+LINK_FLAGS = -brawbin1 -Tvlink_nabu.cmd -vicelabels label.lst
 OBJS       = loader.o splash.o patcher.o interrupts.o cbios.o font.o
 PORTS      = $(basename $(wildcard *.rom))
 TARGETS    = $(patsubst %,%.nabu,$(PORTS))

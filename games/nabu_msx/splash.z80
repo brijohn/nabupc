@@ -19,17 +19,35 @@ splash:
 	ld     bc, 0x0800
 	call   ldirvm
 ; Color Table - red text on black background
-	ld     a, 0x60
+	ld     a, (splash_color)
 	ld     hl, 0x2000
 	ld     bc, 0x1800
 	call   filvrm
 ; Display splash screen message
-	ld     bc, 0
 	ld     ix, splash_msg
+	call   display_message
+	ld     ix, libmsx_splash
+	call   display_message
+delay:
+; Delay Loop
+	xor    a
+	ld     b, 0x0a
+	ld     d, a
+	ld     e, a
+delay_loop:
+	dec    de
+	ld     a, d
+	or     e
+	jr     nz, delay_loop
+	djnz   delay_loop
+	ret
+
+display_message:
+	ld     bc, 0
 next_line:
 	ld     a, (ix + 2)
 	cp     0
-	jr     z, delay
+	ret    z
 	ld     c, a
 	ld     de, 0x1800
 	ld     h, 0
@@ -57,21 +75,15 @@ next_line:
 	pop    bc
 	add    ix, bc
 	jr     next_line
-delay:
-; Delay Loop
-	xor    a
-	ld     b, 0x08
-	ld     d, a
-	ld     e, a
-delay_loop:
-	dec    de
-	ld     a, d
-	or     e
-	jr     nz, delay_loop
-	djnz   delay_loop
 	ret
 
 .section .rodata.splash, "adr"
+.weak splash_color
+splash_color:
+	.byte 0x60
 .weak splash_msg
 splash_msg:
+	.byte 0, 0, 0
+libmsx_splash:
+	.byte 6, 23, 20, "Created using libmsx"
 	.byte 0, 0, 0

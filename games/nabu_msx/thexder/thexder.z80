@@ -1,0 +1,67 @@
+.section .rodata.patches, "adr
+.global rom_patch_table
+rom_patch_table:
+; ---------------------------------------------
+; Prevent writes to port 0
+; ---------------------------------------------
+	.word 0x43c9
+	.byte 3, 0xc3
+	.word IO_Write
+
+; ---------------------------------------------
+; Remove Protection
+; ---------------------------------------------
+	.word 0x48af
+	.byte 2, 0x00, 0x00
+
+; ---------------------------------------------
+; Change Shield key from SHIFT to SYM
+; ---------------------------------------------
+	.word 0x45c8
+	.byte 1, 0x57
+
+	.word 0
+	.byte 0
+
+.section .text.patches, "acrx"
+; ---------------------------------------------
+; This performs several writes to the IO port
+; in the C register. The game will in several
+; places pass in a value of 0 in C. This causes
+; issues on the NABU as that is the control
+; port. This is a replacment that returns if
+; C is 0 instead of trying to write to port 0.
+; ---------------------------------------------
+IO_Write:
+	ld     a, c
+	xor    a
+	ret    z
+	ld     hl, 0xeed0
+	ld     a, (hl)
+	inc    a
+	ret    z
+	ld     b, 0x14
+write_loop:
+	outi
+	push   af
+	outi
+	pop    af
+	outi
+	push   af
+	outi
+	pop    af
+	djnz   write_loop
+	ret
+
+
+.section .rodata.splash, "adr"
+.global splash_msg
+splash_msg:
+	.byte 2, 12, 0x1b, "Conversion by Brian Johnson"
+	.byte 0, 0, 0
+
+.section .msx, "acrx"
+.incbin "thexder.rom"
+
+
+

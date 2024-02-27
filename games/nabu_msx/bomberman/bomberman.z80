@@ -1,0 +1,31 @@
+.section .rodata.patches, "adr
+.global rom_patch_table
+rom_patch_table:
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	.word 0x5064
+	.byte 1, 0x5e
+
+	.word 0x5085
+	.byte 1, 0x5e
+
+; ---------------------------------------------
+; Enable VDP interrupts
+; ---------------------------------------------
+	.word 0x5145
+	.byte 1, 0xe2
+
+	.word 0
+	.byte 0
+
+.section .rodata.splash, "adr"
+.global splash_msg
+splash_msg:
+	.byte 2, 12, 0x1b, "Conversion by Brian Johnson"
+	.byte 0, 0, 0
+
+.section .msx, "acrx"
+.incbin "bomberman.rom"
+
+

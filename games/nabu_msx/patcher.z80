@@ -40,12 +40,6 @@ patch_done:
 .global patch_table
 patch_table:
 ; ---------------------------------------------
-; Use Interrupt Mode 2
-; ---------------------------------------------
-	.word 0x4009
-	.byte 1, 0x5e
-
-; ---------------------------------------------
 ; Address of MSX font
 ; ---------------------------------------------
 	.word 0x0004
@@ -157,6 +151,10 @@ patch_table:
 	.byte 3, 0xc3
 	.word ldirvm
 
+	.word 0x0050
+	.byte 3, 0xc3
+	.word setrd
+
 	.word 0x0053
 	.byte 3, 0xc3
 	.word setwrt
@@ -169,9 +167,21 @@ patch_table:
 	.byte 3, 0xc3
 	.word snsmat
 
+	.word 0x00d5
+	.byte 3, 0xc3
+	.word gtstck
+
+	.word 0x00d8
+	.byte 3, 0xc3
+	.word gttrig
+
 	.word 0x0047
 	.byte 3, 0xc3
 	.word wrtvdp
+
+	.word 0x004a
+	.byte 3, 0xc3
+	.word rdvrm
 
 	.word 0x004d
 	.byte 3, 0xc3

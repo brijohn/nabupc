@@ -283,6 +283,22 @@ setwrt:
 	ret
 
 ; ----------------------------------------------------------
+; Set VDP VRAM Read Address
+;   void SETRD(uint16_t address)
+;       address : HL
+; ----------------------------------------------------------
+.global setrd
+setrd:
+	di
+	ld     a, l
+	out    (VDP_LATCH), a
+	ld     a, h
+	and    0x3f
+	out    (VDP_LATCH), a
+	ei
+	ret
+
+; ----------------------------------------------------------
 ; Read VDP Status Register
 ;   void RDVDP(void)
 ;       return : A - vdp status
@@ -304,6 +320,20 @@ wrtvrm:
 	call   setwrt
 	pop    af
 	out    (VDP_DATA), a
+	ret
+
+; ----------------------------------------------------------
+; Read Byte from VRAM
+;   uint8_t RDVRM(uint16_t address)
+;       address : HL
+;       return  : A
+; ----------------------------------------------------------
+.global rdvrm
+rdvrm:
+	call    setrd
+	; wait (at least) 29 t-states between VRAM accesses
+	or      0
+	in      a, (VDP_DATA)
 	ret
 
 ; ----------------------------------------------------------
@@ -369,6 +399,87 @@ snsmat.2:
 	cpl
 	pop    bc
 	pop    hl
+	ret
+
+; ----------------------------------------------------------
+; Get Joystick direction
+;   unit8_t gtstck(uint8_t controller_id)
+;       controller_id : A (0 = key, 1 = joy1, 2 = joy2)
+;       return        : A - direction of joystick
+; ----------------------------------------------------------
+.global gtstck
+gtstck:
+	push   bc
+	push   hl
+	cp     0x00
+	jr     nz, joy_stck
+	ld     a, (row8)
+	rrca
+	rrca
+	rrca
+	rrca
+	and    0x0f
+	ld     hl, joypos_kbd_tbl
+	ld     b, 0
+	ld     c, a
+	add    hl, bc
+	ld     a, (hl)
+	pop    hl
+	pop    bc
+	and    a
+	ret
+joy_stck:
+	dec    a
+	jr     z, sel_stc1
+	xor    a
+	jr     joy_end
+sel_stc1:
+	ld     a, (joystick_state)
+joy_end:
+	and    0x0f
+	ld     hl, joypos_joy_tbl
+	ld     b, 0
+	ld     c, a
+	add    hl, bc
+	ld     a, (hl)
+	pop    hl
+	pop    bc
+	and    a
+	ret
+
+; ----------------------------------------------------------
+; Get Joystick trigger state
+;   unit8_t gttrig(uint8_t trig_id)
+;       trig_id : A (0 = space, 1/3 = joy1 A/B, 2/4 = joy2 A/B)
+;       return  : A - 00 = not pressed, FF = pressed
+; ----------------------------------------------------------
+.global gttrig
+gttrig:
+	cp     5
+	jr     nc, gttrig_space              ; if value of A is above 5, go space routine
+	or     a
+	jr     nz, joy_trig
+; Keyboard (spacebar)
+gttrig_space:
+	ld     a, (row8)
+	cpl
+	or     0xfe                          ; FE -> pressed, FF -> not pressed
+	inc    a                             ; FF -> pressed, 00 -> not pressed
+	ret
+joy_trig:
+	and    0x01
+	jr     z, sel_trig1
+	jr     trig_notpressed
+sel_trig1:
+	and    0x02
+	ld     a, (joystick_state)
+	jr     nz, trig_notpressed
+	bit    4, a
+	jr     z, trig_notpressed
+	ld     a, 0xff
+	ret
+trig_notpressed:
+	xor    a
 	ret
 
 ; ----------------------------------------------------------
@@ -510,15 +621,16 @@ set_base_address_loop$:
 .section .rodata.cbios, "adr"
 set_base_address_table:
 	.byte 0x00,0x00,0x06,0x0A,0x05,0x09,0x05
-mode2_regs:
-	.byte 0x02                    ; R0: M3 = 1 (mode2)
-	.byte 0xa2                    ; R1: 16k, blank, irq, mode2, 16x16, 1X
-	.byte 0x06                    ; R2: name table = 0x1800
-	.byte 0xff                    ; R3: color table = 0x2000
-	.byte 0x03                    ; R4: pattern generator = 0x0000
-	.byte 0x36                    ; R5: sprite attribute table = 0x1b00
-	.byte 0x07                    ; R6: sprite pattern table = 0x3800
-	.byte 0x00                    ; R7: background, forground color = 0
+joypos_joy_tbl:
+	;          0    1    2    3    4    5    6    7
+	.byte      0x00,0x01,0x05,0x00,0x07,0x08,0x06,0x07
+	;          8    9    A    B    C    D    E    F
+	.byte      0x03,0x02,0x04,0x03,0x00,0x01,0x05,0x00
+joypos_kbd_tbl:
+	;          0    1    2    3    4    5    6    7
+	.byte      0x00,0x07,0x01,0x08,0x05,0x06,0x00,0x07
+	;          8    9    A    B    C    D    E    F
+	.byte      0x03,0x00,0x02,0x01,0x04,0x05,0x03,0x00
 
 .section .data.cbios, "adrw"
 ; MSX Keyboard Matrix Rows

@@ -6,13 +6,14 @@
 .extern patch, splash
 .extern patch_table, rom_patch_table
 
-.section .crt0, "acrx"
+.section .crt0.jp, "acrx"
 
 	nop
 	nop
 	nop
 	jp     entry
 
+.section .crt0.entry, "acrx"
 entry:
 	di
 	ld     sp, 0xE000          ; Set temporary stack to high 8k of RAM

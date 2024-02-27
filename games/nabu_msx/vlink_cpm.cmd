@@ -1,8 +1,10 @@
 ENTRY(entry);
 
 SECTIONS {
-	.crt0 0x140d : {
-		*(.crt0 .crt0.*)
+	.crt0 0x100 : {
+		*(.crt0.jp)
+		. = ALIGN(256);
+		*(.crt0.entry)
 		. = ALIGN(256);
 	}
 	PROVIDE(IM2_PAGE = (. + 1) >> 8);

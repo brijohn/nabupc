@@ -130,19 +130,6 @@ patch_table:
 	.word 0x0024                  ; ENASLT - Just return
 	.byte 1, 0xc9
 
-	.word 0x0138                  ; RSLREG - Just return
-	.byte 1, 0xc9
-
-	.word 0x013b                  ; WSLREG - Just return
-	.byte 1, 0xc9
-
-	.word 0x0132                  ; CHGCAP - Just return
-	.byte 1, 0xc9
-
-	.word 0x0062
-	.byte 3, 0xc3
-	.word chgclr
-
 	.word 0x0041
 	.byte 3, 0xc3
 	.word disscr
@@ -150,6 +137,38 @@ patch_table:
 	.word 0x0044
 	.byte 3, 0xc3
 	.word enascr
+
+	.word 0x0047
+	.byte 3, 0xc3
+	.word wrtvdp
+
+	.word 0x004a
+	.byte 3, 0xc3
+	.word rdvrm
+
+	.word 0x004d
+	.byte 3, 0xc3
+	.word wrtvrm
+
+	.word 0x0050
+	.byte 3, 0xc3
+	.word setrd
+
+	.word 0x0053
+	.byte 3, 0xc3
+	.word setwrt
+
+	.word 0x0056
+	.byte 3, 0xc3
+	.word filvrm
+
+	.word 0x005c
+	.byte 3, 0xc3
+	.word ldirvm
+
+	.word 0x0062
+	.byte 3, 0xc3
+	.word chgclr
 
 	.word 0x0072
 	.byte 3, 0xc3
@@ -167,30 +186,6 @@ patch_table:
 	.byte 3, 0xc3
 	.word gspsiz
 
-	.word 0x0056
-	.byte 3, 0xc3
-	.word filvrm
-
-	.word 0x005c
-	.byte 3, 0xc3
-	.word ldirvm
-
-	.word 0x0050
-	.byte 3, 0xc3
-	.word setrd
-
-	.word 0x0053
-	.byte 3, 0xc3
-	.word setwrt
-
-	.word 0x013e
-	.byte 3, 0xc3
-	.word rdvdp
-
-	.word 0x0141
-	.byte 3, 0xc3
-	.word snsmat
-
 	.word 0x00d5
 	.byte 3, 0xc3
 	.word gtstck
@@ -199,18 +194,6 @@ patch_table:
 	.byte 3, 0xc3
 	.word gttrig
 
-	.word 0x0047
-	.byte 3, 0xc3
-	.word wrtvdp
-
-	.word 0x004a
-	.byte 3, 0xc3
-	.word rdvrm
-
-	.word 0x004d
-	.byte 3, 0xc3
-	.word wrtvrm
-
 	.word 0x0093
 	.byte 3, 0xc3
 	.word wrtpsg
@@ -218,6 +201,23 @@ patch_table:
 	.word 0x0096
 	.byte 3, 0xc3
 	.word rdpsg
+
+	.word 0x0132                  ; CHGCAP - Just return
+	.byte 1, 0xc9
+
+	.word 0x0138                  ; RSLREG - Just return
+	.byte 1, 0xc9
+
+	.word 0x013b                  ; WSLREG - Just return
+	.byte 1, 0xc9
+
+	.word 0x013e
+	.byte 3, 0xc3
+	.word rdvdp
+
+	.word 0x0141
+	.byte 3, 0xc3
+	.word snsmat
 
 	.word 0
 	.byte 0

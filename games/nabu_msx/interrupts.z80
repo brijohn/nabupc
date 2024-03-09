@@ -45,9 +45,18 @@ nullirq:
 ; ---------------------------------------------
 .weak keyboard_irq
 keyboard_irq:
-	push   af
-	push   bc
 	push   hl
+	push   de
+	push   bc
+	push   af
+	exx
+	ex     af, af'
+	push   hl
+	push   de
+	push   bc
+	push   af
+	push   iy
+	push   ix
 	ld     a, (controller)
 	cp     0x80
 	jr     z, handle_joystick
@@ -119,9 +128,18 @@ space_pressed:
 	ld     a, 1
 	ld     (fire_delay), a     ; Delay counter till FIRE key gets released
 kbirq_exit:
-	pop    hl
-	pop    bc
+	pop    ix
+	pop    iy
 	pop    af
+	pop    bc
+	pop    de
+	pop    hl
+	exx
+	ex     af, af'
+	pop    af
+	pop    bc
+	pop    de
+	pop    hl
 	ei
 	reti
 

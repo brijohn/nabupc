@@ -463,7 +463,7 @@ gtstck:
 joy_stck:
 	dec    a
 	jr     z, sel_stc1
-	xor    a
+	ld     a, (joystick_state + 1)
 	jr     joy_end
 sel_stc1:
 	ld     a, (joystick_state)
@@ -499,18 +499,24 @@ gttrig_space:
 	inc    a                             ; FF -> pressed, 00 -> not pressed
 	ret
 joy_trig:
+	push   hl
 	and    0x01
-	jr     z, sel_trig1
-	jr     trig_notpressed
-sel_trig1:
+	jr     z, sel_trig2
+	ld     hl, joystick_state
+	jr     check_trig
+sel_trig2:
+	ld     hl, joystick_state + 1
+check_trig:
 	and    0x02
-	ld     a, (joystick_state)
+	ld     a, (hl)
 	jr     nz, trig_notpressed
 	bit    4, a
 	jr     z, trig_notpressed
 	ld     a, 0xff
+	pop    hl
 	ret
 trig_notpressed:
+	pop    hl
 	xor    a
 	ret
 
@@ -524,8 +530,20 @@ trig_notpressed:
 rdpsg:
 	cp     0x0e
 	jr     nz, rdpsg.1
-	ld     a, (joystick_state)
+	push   de
+	push   hl
+	ld     hl, joystick_state
+	ld     d, 0
+	ld     a, (psg15)
+	rlca
+	rlca
+	and    0x01
+	ld     e, a
+	add    hl, de
+	ld     a, (hl)
 	cpl
+	pop    hl
+	pop    de
 	ret
 rdpsg.1:
 	out    (PSG_LATCH), a
@@ -541,16 +559,20 @@ rdpsg.1:
 .global wrtpsg
 wrtpsg:
 	cp     0x0f
-	ret    z
+	jr     nz, wrtpsg.1
+	ld     a, e
+	ld     (psg15), a
+	ret
+wrtpsg.1:
 	di
 	out    (PSG_LATCH), a
 	push   af
 	cp     0x07
 	ld     a, e
-	jr     nz, wrtpsg.1
+	jr     nz, wrtpsg.2
 	and    0x3f
 	or     0x40
-wrtpsg.1:
+wrtpsg.2:
 	out    (PSG_WRITE), a
 	ei
 	pop    af
@@ -665,6 +687,8 @@ joypos_kbd_tbl:
 	.byte      0x03,0x00,0x02,0x01,0x04,0x05,0x03,0x00
 
 .section .data.cbios, "adrw"
+; PSG Register 15
+psg15:     .byte 0
 ; MSX Keyboard Matrix Rows
 .global row0, row1, row2, row3, row4, row5, row6, row7, row8
 row0:      .byte 0

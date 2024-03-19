@@ -60,6 +60,8 @@ keyboard_irq:
 	ld     a, (controller)
 	cp     0x80
 	jr     z, handle_joystick
+	cp     0x81
+	jr     z, handle_joystick
 	cp     0x84
 	jr     z, handle_paddle
 	in     a, (0x90)
@@ -69,13 +71,18 @@ keyboard_irq:
 	jr     z, space_pressed
 	cp     0x80
 	jr     z, controller_select
+	cp     0x81
+	jr     z, controller_select
 	cp     0x84
 	jr     z, controller_select
 	cp     0xE0
 	call   nc, special_keys
 	jr     kbirq_exit
 handle_joystick:
+	and    0x0f
+	ld     e, a
 	in     a, (0x90)
+	ld     d, 0
 	ld     b, a
 	and    0x12
 	bit    0, b
@@ -94,7 +101,9 @@ joystick.up:
 joystick.left:
 	set    2, a
 joystick.set:
-	ld     (joystick_state), a
+	ld     hl, joystick_state
+	add    hl, de
+	ld     (hl), a
 	xor    a
 	ld     (controller), a
 	jr     kbirq_exit
@@ -244,7 +253,8 @@ keyi_hook:
 .section  .data.interrupts, "adrw"
 .global joystick_state, paddle_value
 joystick_state:
-	.byte 0                ; Current joystick state
+	.byte 0                ; Current joystick 1 state
+	.byte 0                ; Current joystick 2 state
 paddle_value:
 	.byte 0                ; Current analog value of paddle
 fire_delay:

@@ -50,3 +50,6 @@
 .set          KEYBUF, 0xfbf0
 
 .set          SCRMOD, 0xfcaf
+
+.set          H_KEYI, 0xfd9a
+.set          H_TIMI, 0xfd9f

@@ -22,6 +22,8 @@
 ; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 ; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+.include "constants.inc"
+
 .section .int_vec, "adr"
 
 	.word  nullirq
@@ -64,7 +66,7 @@ keyboard_irq:
 	jr     z, handle_joystick
 	cp     0x84
 	jr     z, handle_paddle
-	in     a, (0x90)
+	in     a, (KBD_DATA)
 	cp     0x94
 	jr     z, kbirq_exit
 	cp     0x20
@@ -81,7 +83,7 @@ keyboard_irq:
 handle_joystick:
 	and    0x0f
 	ld     e, a
-	in     a, (0x90)
+	in     a, (KBD_DATA)
 	ld     d, 0
 	ld     b, a
 	and    0x12
@@ -108,7 +110,7 @@ joystick.set:
 	ld     (controller), a
 	jr     kbirq_exit
 handle_paddle:
-	in     a, (0x90)
+	in     a, (KBD_DATA)
 	ld     b, a
 	and    0xf0
 	cp     0xd0
@@ -233,7 +235,12 @@ vblank_irq:
 	ld     hl, row8
 	res    0, (hl)             ; Else reset keyboard fire button state
 keyi_hook:
-	call   0xfd9a              ; KEYI Hook
+	call   H_KEYI              ; KEYI Hook
+	in     a, (VDP_LATCH)
+	or     a
+	jp     p, vbirq_exit
+	call   H_TIMI              ; TIMI Hook
+vbirq_exit:
 	pop    ix
 	pop    iy
 	pop    af

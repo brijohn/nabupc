@@ -83,11 +83,16 @@ patch_table:
 	.byte 1, VDP_DATA
 
 ; ---------------------------------------------
-; Initialize KEYI hook to just rdvdp bios call
+; Initialize KEYI hook to just return
 ; ---------------------------------------------
-	.word 0xfd9a
-	.byte 3, 0xc3
-	.word rdvdp
+	.word H_KEYI
+	.byte 1, 0xc9
+
+; ---------------------------------------------
+; Initialize TIMI hook to just return
+; ---------------------------------------------
+	.word H_TIMI
+	.byte 1, 0xc9
 
 ; ---------------------------------------------
 ; Initialize Keyboard Buffer

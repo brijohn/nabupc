@@ -39,9 +39,14 @@
 .set          BAKCLR, 0xf3ea
 .set          BDRCLR, 0xf3eb
 
+.set          PUTPNT, 0xf3f8
+.set          GETPNT, 0xf3fa
+
 .set          NAMBAS, 0xf922
 .set          CGPBAS, 0xf924
 .set          PATBAS, 0xf926
 .set          ATRBAS, 0xf928
+
+.set          KEYBUF, 0xfbf0
 
 .set          SCRMOD, 0xfcaf

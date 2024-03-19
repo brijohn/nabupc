@@ -39,6 +39,22 @@
 ; ==========================================================
 
 ; ----------------------------------------------------------
+; Compares two 16 bit numbers
+;   void DCOMPR(uint16_t val1, uint16_t val2)
+;       val1 : HL
+;       val2 : DE
+;       return : Z if equal, C val1 < val2
+; ----------------------------------------------------------
+.global dcompr
+dcompr:
+	ld     a, h
+	cp     d
+	ret    nz
+	ld     a, l
+	cp     e
+	ret
+
+; ----------------------------------------------------------
 ; Blanks Screen
 ;   void DISSCR(void)
 ; ----------------------------------------------------------
@@ -64,6 +80,25 @@ enascr:
 	call   wrtvdp
 	ret
 
+; ----------------------------------------------------------
+; Change Screen Mode
+;   void CHGMOD(uint8_t mode)
+;       mode : A
+; ----------------------------------------------------------
+.global chgmod
+chgmod:
+	cp     4
+	ret    nc
+	ld     hl, chgmod_tbl
+	ld     c, a
+	ld     b, 0
+	add    hl, bc
+	add    hl, bc
+	ld     c, (hl)
+	inc    hl
+	ld     h, (hl)
+	ld     l, c
+	jp     (hl)
 
 chgmod_finish:
                 ; Write new values from system RAM to the VDP.
@@ -119,6 +154,55 @@ inigrp_lp$:
 	call    clrspr_attr
 	call    cls_screen2
 	jp      chgmod_finish
+
+; ----------------------------------------------------------
+; Initializes Screen Mode 3
+;   void INIMLT(void)
+; ----------------------------------------------------------
+.global inimlt
+inimlt:
+	call   disscr
+
+	ld     a, 3
+	ld     (SCRMOD), a
+	call   chgclr
+
+	ld     hl, (MLTNAM)
+	ld     (NAMBAS), hl
+	call   setwrt
+	xor    a
+	ld     c, 6
+	di
+inimlt_loop1$:
+	push   af
+	ld     e, 4
+inimlt_loop2$:
+	push   af
+	ld     b, 32
+inimlt_loop3$:
+	out    (VDP_DATA), a
+	inc    a
+	djnz   inimlt_loop3$
+	pop    af
+	dec    e
+	jr     nz, inimlt_loop2$
+	pop    af
+	add    a, 32
+	dec    c
+	jr     nz, inimlt_loop1$
+	ei
+
+	ld     hl, (MLTCGP)
+	ld     (CGPBAS), hl
+	ld     hl, (MLTATR)
+	ld     (ATRBAS), hl
+	ld     hl, (MLTPAT)
+	ld     (PATBAS), hl
+
+	call   setmlt
+	call   clrspr_attr
+	call   cls_screen3
+	jp     chgmod_finish
 
 ; ----------------------------------------------------------
 ; Setup Screen Mode 2
@@ -579,8 +663,64 @@ wrtpsg.2:
 	ret
 
 ; ----------------------------------------------------------
+; Check Keyboard Buffer Status
+;   void CHSNS(void)
+;       Zero Flag set if empty
+; ----------------------------------------------------------
+.global chsns
+chsns:
+	ei
+	push   hl
+	push   de
+	ld     hl, (GETPNT)
+	ld     de, (PUTPNT)
+	rst    0x20
+	ld     a, 0xff
+	jr     nz, chsns_inbuf
+	xor    a
+chsns_inbuf:
+	pop    de
+	pop    hl
+	ret
+
+; ----------------------------------------------------------
+; Get Next Character from Keyboard Buffer
+;   uint8_t CHGET(void)
+;       return    : A - ASCII value
+; ----------------------------------------------------------
+.global chget
+chget:
+	push   hl
+	push   de
+chget_wait:
+	ld     hl, (GETPNT)
+	ld     de, (PUTPNT)
+	rst    0x20
+	jr     nz, chget_char
+	ei
+	halt
+	jr     chget_wait
+chget_char:
+	ld     a, (hl)
+	push   af
+	inc    hl
+	ld     a, l
+	cp     0xff & (KEYBUF + 40)
+	jr     nz, chget_nowrap
+	ld     hl, KEYBUF
+chget_nowrap:
+	ld     (GETPNT), hl
+	pop    af
+	pop    de
+	pop    hl
+	ret
+
+; ----------------------------------------------------------
 ; Internal CBIOS Functions
 ; ----------------------------------------------------------
+null_jp:
+	ret
+
 clrspr_attr:
 	ld     e, 209           ; Y coordinate
 	ld     hl, (ATRBAS)
@@ -673,6 +813,11 @@ set_base_address_loop$:
 	ret
 
 .section .rodata.cbios, "adr"
+chgmod_tbl:
+	.word   null_jp         ; SCREEN0
+	.word   null_jp         ; SCREEN1
+	.word   inigrp          ; SCREEN2
+	.word   inimlt          ; SCREEN3
 set_base_address_table:
 	.byte 0x00,0x00,0x06,0x0A,0x05,0x09,0x05
 joypos_joy_tbl:

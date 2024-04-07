@@ -183,36 +183,43 @@ special_keys:
 	cp     0x00
 	jr     nz, left_arrow
 	ld     c, 0x7f
+	jr     set_bit
 left_arrow:
 	cp     0x01
 	jr     nz, up_arrow
 	ld     c, 0xef
+	jr     set_bit
 up_arrow:
 	cp     0x02
 	jr     nz, down_arrow
 	ld     c, 0xdf
+	jr     set_bit
 down_arrow:
 	cp     0x03
 	jr     nz, sym_key
 	ld     c, 0xbf
+	jr     set_bit
 sym_key:
 	cp     0x08
 	jr     nz, pause_key
 	ld     hl, row6
 	ld     c, 0xfb
+	jr     set_bit
 pause_key:
 	cp     0x09
 	jr     nz, no_key
 	ld     hl, row7
 	ld     c, 0xef
+	jr     set_bit
 no_key:
 	cp     0x06
 	jr     nz, yes_key
 	ld     hl, row7
 	ld     c, 0xfe
+	jr     set_bit
 yes_key:
 	cp     0x07
-	jr     nz, set_bit
+	ret    nz
 	ld     hl, row7
 	ld     c, 0xfd
 set_bit:

@@ -21,6 +21,7 @@ You can also build CP/M com files by running ```make TYPE=cpm```
 
   * arkanoid.rom - **2183f07fa3ba87360100b2fa21fda0f55c0f8814**
   * bomberman.rom - **5324e053709ff8da6c18ae4afba6a2e0c3a722ba**
+  * boulderdash.rom - **14fae375b81c86f71e872adca792c23aafac66a0**
   * choplifter.rom - **b3ca70c8c8120f8261bb865baf5f57b6506ca02e**
   * hyperraly.rom - **7dfe091e02f6c1b21bd65e44eb5052d564d0ef92**
   * thexder.rom - **a2109da08b1921c4b3b47c6847598d424581b508**
@@ -47,6 +48,16 @@ There are two cheats in this version both are accessed from the title screen.
 ### Controls
 
 Both joystick and keyboard are supported, the keyboard controls use the standard MSX mappings of arrows for movement and space for fire.
+
+## Boulderdash
+
+### Controls
+
+Both joystick and keyboard are supported, the keyboard controls use the standard MSX mappings of arrows for movement and space for fire.
+
+On the title screen pressing J will select the number of joysticks (0-2) and pressing P will select a 1 or 2 player game.
+
+Pressing ESC in game will commit suicide and pressing GO will pause the game.
 
 ## Choplifter
 

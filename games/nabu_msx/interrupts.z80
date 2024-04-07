@@ -68,9 +68,9 @@ keyboard_irq:
 	jr     z, handle_paddle
 	in     a, (KBD_DATA)
 	cp     0x94
-	jr     z, kbirq_exit
-	cp     0x20
-	jr     z, space_pressed
+	jp     z, kbirq_exit
+	cp     0x80
+	jr     c, ascii_key
 	cp     0x80
 	jr     z, controller_select
 	cp     0x81
@@ -133,7 +133,12 @@ paddle_finished:
 controller_select:
 	ld     (controller), a
 	jr     kbirq_exit
-space_pressed:
+ascii_key:
+	ld     d, a
+	call   store_in_keybuf
+	ld     a, d
+	cp     0x20
+	jr     nz, kbirq_exit
 	ld     hl, row8
 	set    0, (hl)
 	ld     a, 1
@@ -153,6 +158,23 @@ kbirq_exit:
 	pop    hl
 	ei
 	reti
+
+store_in_keybuf:
+	ld     hl, (PUTPNT)
+	ld     (hl), a
+	inc    hl
+	ld     a, l
+	cp     0xff & (KEYBUF + 40)
+	jr     nz, store_in_keybuf_nowrap
+	ld     hl, KEYBUF
+store_in_keybuf_nowrap:
+	push   de
+	ld     de, (GETPNT)
+	rst    0x20
+	pop    de
+	ret    z
+	ld     (PUTPNT), hl
+	ret
 
 special_keys:
 	ld     b, a

@@ -23,6 +23,7 @@ You can also build CP/M com files by running ```make TYPE=cpm```
   * bomberman.rom - **5324e053709ff8da6c18ae4afba6a2e0c3a722ba**
   * boulderdash.rom - **14fae375b81c86f71e872adca792c23aafac66a0**
   * choplifter.rom - **b3ca70c8c8120f8261bb865baf5f57b6506ca02e**
+  * elevator.rom - **6cbddd118afe63e79cb8a40f8aa879df1c7590e1**
   * hyperraly.rom - **7dfe091e02f6c1b21bd65e44eb5052d564d0ef92**
   * thexder.rom - **a2109da08b1921c4b3b47c6847598d424581b508**
   * roadfighter.rom - **bf4a0bab1e8eaa70a8b12cd9a81d7a90a74c9e26**
@@ -66,6 +67,14 @@ Pressing ESC in game will commit suicide and pressing GO will pause the game.
 Both joystick and keyboard are supported, the keyboard controls use the standard MSX mappings of arrows for movement and space for fire.
 
 In order to change the direction your helicopter is facing hold joystick in the direction you want to face and press fire.
+
+## Elevator Action
+
+### Controls
+
+Keyboard controls use arrows for movement (down crouches) with space for fire and SYM for jump.
+
+Joystick is also supported but jump has been remapped to up instead of the second button used with the MSX.
 
 ### Cheats
 

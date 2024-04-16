@@ -1,0 +1,83 @@
+; Elevator Action Conversion
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+.section .rodata.patches, "adr
+.global rom_patch_table
+rom_patch_table:
+; ---------------------------------------------
+; Use Interrupt Mode 2
+; ---------------------------------------------
+	.word 0x4015
+	.byte 1, 0x5e
+
+; ---------------------------------------------
+; NOP function call for Slot loading
+; ---------------------------------------------
+	.word 0x4016
+	.byte 3, 0x00, 0x00, 0x00
+
+; ---------------------------------------------
+; Map Keyboard SYM to button 2
+; ---------------------------------------------
+	.word 0x4918
+	.byte 2, 0x06, 0x04
+
+; ---------------------------------------------
+; Map Keyboard SPACE to button 1
+; ---------------------------------------------
+	.word 0x491b
+	.byte 2, 0x08, 0x01
+
+; ---------------------------------------------
+; Map Jump on joystick to up
+; ---------------------------------------------
+	.word 0x50fc
+	.byte 2
+	.word patch_joystick_jump
+
+	.word 0
+	.byte 0
+
+.section .rodata.splash, "adr"
+.global splash_msg
+splash_msg:
+	.byte 2, 12, 0x1b, "Conversion by Brian Johnson"
+	.byte 0, 0, 0
+
+.section .text.patches, "acrx"
+; Map jump on joystick to Up
+patch_joystick_jump:
+	ld     a, 1
+	call   0xd5
+	cp     0x01
+	jr     z, jump
+	xor    a
+	ret
+jump:
+	ld     a, 0xff
+	or     a
+	ret
+
+.section .msx, "acrx"
+.incbin "elevator.rom"

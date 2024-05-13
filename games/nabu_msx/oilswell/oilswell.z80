@@ -37,7 +37,7 @@ rom_patch_table:
 .section .rodata.splash, "adr"
 .global splash_msg
 splash_msg:
-	.byte 6, 12, 19, "Conversion by GTAMP"                                
+	.byte 6, 12, 19, "Conversion by GTAMP"
 	.byte 0, 0, 0
 
 .section .msx, "acrx"

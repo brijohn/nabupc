@@ -24,7 +24,7 @@
 
 .include "constants.inc"
 
-.section .rodata.patches, "adr
+.section .rodata.patches, "adr"
 .global rom_patch_table
 rom_patch_table:
 ; ---------------------------------------------

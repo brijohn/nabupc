@@ -25,6 +25,7 @@ You can also build CP/M com files by running ```make TYPE=cpm```
   * choplifter.rom - **b3ca70c8c8120f8261bb865baf5f57b6506ca02e**
   * elevator.rom - **6cbddd118afe63e79cb8a40f8aa879df1c7590e1**
   * hyperraly.rom - **7dfe091e02f6c1b21bd65e44eb5052d564d0ef92**
+  * oilswell.rom - **5b53794d3d73df29cbcec411c0f65e9e9898977f**
   * thexder.rom - **a2109da08b1921c4b3b47c6847598d424581b508**
   * roadfighter.rom - **bf4a0bab1e8eaa70a8b12cd9a81d7a90a74c9e26**
 
@@ -87,6 +88,12 @@ At the title screen press and hold YES then press NO to gain infinite lives when
 Both joystick and keyboard controls are supported. Steering is done with the left/right arrows, while pressing up will engage your breaks. Pressing space/fire will accelerate.
 
 You can shift into high gear for overtaking other cars by coming up to speed and then releasing throttle and quickly pressing it again. Switching back to low gear will happen automatically if you reduce your speed.
+
+## Oil's Well
+
+### Controls
+
+Both joystick and keyboard are supported. Arrows move, fire/space retracts.
 
 ## THEXDER
 

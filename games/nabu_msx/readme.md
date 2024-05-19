@@ -24,6 +24,7 @@ You can also build CP/M com files by running ```make TYPE=cpm```
   * boulderdash.rom - **14fae375b81c86f71e872adca792c23aafac66a0**
   * choplifter.rom - **b3ca70c8c8120f8261bb865baf5f57b6506ca02e**
   * elevator.rom - **6cbddd118afe63e79cb8a40f8aa879df1c7590e1**
+  * galaga.rom - **faa5aef23febc61a875e28eebe3aadf83e1f5ba7**
   * hyperraly.rom - **7dfe091e02f6c1b21bd65e44eb5052d564d0ef92**
   * oilswell.rom - **5b53794d3d73df29cbcec411c0f65e9e9898977f**
   * thexder.rom - **a2109da08b1921c4b3b47c6847598d424581b508**
@@ -69,6 +70,10 @@ Both joystick and keyboard are supported, the keyboard controls use the standard
 
 In order to change the direction your helicopter is facing hold joystick in the direction you want to face and press fire.
 
+### Cheats
+
+At the title screen press and hold YES then press NO to gain infinite lives when starting the game.
+
 ## Elevator Action
 
 ### Controls
@@ -77,9 +82,11 @@ Keyboard controls use arrows for movement (down crouches) with space for fire an
 
 Joystick is also supported but jump has been remapped to up instead of the second button used with the MSX.
 
-### Cheats
+## Galaga
 
-At the title screen press and hold YES then press NO to gain infinite lives when starting the game.
+### Controls
+
+Only joystick controls are currently supported.
 
 ## Hyper Rally
 

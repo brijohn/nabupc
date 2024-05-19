@@ -65,8 +65,12 @@ entry:
 	out    (0x40), a
 	ld     a, 0x0E             ; I/O Port A register
 	out    (0x41), a
-	ld     a, 0x30             ; Enable VBlank and keyboard interrupt
+	ld     a, (irq_mask)       ; configure irq mask
 	out    (0x40), a
 	ei
 	ld     hl, (MSX_INIT)
 	jp     (hl)                ; Jump to MSX ROM entry point
+
+.weak irq_mask
+irq_mask:
+	.byte  0x30                ; Enable VBlank and keyboard interrupt

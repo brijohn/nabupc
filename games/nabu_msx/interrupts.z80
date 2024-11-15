@@ -105,6 +105,10 @@ joystick.left:
 joystick.set:
 	ld     hl, joystick_state
 	add    hl, de
+	ld     b, a
+	ld     a, 0xe0
+	and    (hl)
+	or     b
 	ld     (hl), a
 	xor    a
 	ld     (controller), a
@@ -127,6 +131,13 @@ paddle_finished:
 	ld     a, (paddle_temp)
 	or     b
 	ld     (paddle_value), a
+;   Emulate second button using pot
+	ld     hl, joystick_state
+	cp     0x00
+	set    5, (hl)
+	jr     z, paddle_exit
+	res    5, (hl)
+paddle_exit:
 	xor    a
 	ld     (controller), a
 	jr     kbirq_exit

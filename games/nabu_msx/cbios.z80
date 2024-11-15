@@ -593,9 +593,14 @@ sel_trig2:
 check_trig:
 	and    0x02
 	ld     a, (hl)
-	jr     nz, trig_notpressed
+	jr     nz, check_trig2
 	bit    4, a
 	jr     z, trig_notpressed
+	jr     trig_pressed
+check_trig2:
+	bit    5, a
+	jr     z, trig_notpressed
+trig_pressed:
 	ld     a, 0xff
 	pop    hl
 	ret

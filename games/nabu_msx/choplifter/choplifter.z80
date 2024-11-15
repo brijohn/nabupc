@@ -58,6 +58,9 @@ splash_msg:
 .section .text.patches, "acrx"
 ; Single button control scheme
 patch_control_scheme:
+	ld     a, (two_button)
+	and    a
+	jr     nz, use_two_button
 	bit    4, (iy+0x59)        ; Checks for FIRE button (0 == pressed)
 	ret    nz
 	ld     a, (0xe278)         ; Heading (00 = neutral, ff = left, 01 = right)
@@ -77,6 +80,9 @@ neutral:
 	bit    2, (iy+0x59)
 	ret    z
 	bit    3, (iy+0x59)
+	ret
+use_two_button:
+	bit    5, (iy+0x59)
 	ret
 
 ; Enable infinite lives

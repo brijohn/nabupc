@@ -70,7 +70,7 @@ keyboard_irq:
 	cp     0x94
 	jp     z, kbirq_exit
 	cp     0x80
-	jr     c, ascii_key
+	jp     c, ascii_key
 	cp     0x80
 	jr     z, controller_select
 	cp     0x81
@@ -79,7 +79,7 @@ keyboard_irq:
 	jr     z, controller_select
 	cp     0xE0
 	call   nc, special_keys
-	jr     kbirq_exit
+	jp     kbirq_exit
 handle_joystick:
 	and    0x0f
 	ld     e, a
@@ -135,6 +135,8 @@ paddle_finished:
 	ld     hl, joystick_state
 	cp     0x00
 	set    5, (hl)
+	ld     a, 1
+	ld     (two_button), a
 	jr     z, paddle_exit
 	res    5, (hl)
 paddle_exit:
@@ -298,7 +300,9 @@ vbirq_exit:
 
 
 .section  .data.interrupts, "adrw"
-.global joystick_state, paddle_value
+.global joystick_state, paddle_value, two_button
+two_button:
+	.byte 0                ; Two button joystick attached
 joystick_state:
 	.byte 0                ; Current joystick 1 state
 	.byte 0                ; Current joystick 2 state

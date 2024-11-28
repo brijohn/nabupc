@@ -1,0 +1,305 @@
+; Interrupt handler routines and VDP and Keyboard IRQs
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+.set irq_vector_base, 0x2000                ; Base address of the interrupt vector table
+.set KEYBOARD_DATA, 0x90                    ; Keyboard data port
+.set KEYBOARD_STATUS, 0x91                  ; Keyboard status port
+.set AY38910_DATA, 0x40                     ; Data port of AY-3-8910
+.set AY38910_ADDR, 0x41                     ; Address latch of AY-3-8910
+.set IO_PORT_A, 0x0E                        ; Register for Port A on the AY-3-8910
+
+; Interrupt bit masks
+.set INTERRUPT_HCCA_RX, 0x80                ; Bit 7: HCCA RX interrupt
+.set INTERRUPT_HCCA_TX, 0x40                ; Bit 6: HCCA TX interrupt
+.set INTERRUPT_KEYBOARD, 0x20               ; Bit 5: Keyboard interrupt
+.set INTERRUPT_VDP, 0x10                    ; Bit 4: VDP interrupt
+.set INTERRUPT_OPTION_CARD_0, 0x08          ; Bit 3: Option Card 0 interrupt
+.set INTERRUPT_OPTION_CARD_1, 0x04          ; Bit 2: Option Card 1 interrupt
+.set INTERRUPT_OPTION_CARD_2, 0x02          ; Bit 1: Option Card 2 interrupt
+.set INTERRUPT_OPTION_CARD_3, 0x01          ; Bit 0: Option Card 3 interrupt
+
+.section .text, "acrx"
+
+; Keyboard interrupt handler
+.global keyboard_interrupt
+keyboard_interrupt:
+    push af                                 ; Save registers
+    push bc
+    push de
+    push hl
+    ld d, 0                                 ; Zero D for table lookups
+    in  a, (KEYBOARD_DATA)                  ; Read keyboard scan code
+    cp 0x94                                 ; Check for watchdog signal
+    jr z, clear_keypad                      ; Clear keypad state on watchdog tick
+    cp 0x2d                                 ; Check for '-' key (mapped to '*')
+    jr z, handle_keypad_star
+    cp 0x3d                                 ; Check for '=' key (mapped to '#')
+    jr z, handle_keypad_pound
+    cp 0xe0                                 ; Check if scan code >= 0xe0
+    jr nc, handle_stick_emulation
+    cp 0xc0                                 ; Check if scan code >= 0xc0
+    jr nc, keyboard_interrupt_exit
+    cp 0xa0                                 ; Check if scan code >= 0xa0
+    jp nc, handle_joystick
+    cp 0x3a                                 ; Check if scan code >= 0x3a
+    jr nc, keyboard_interrupt_exit
+    cp 0x30                                 ; Check if scan code >= 0x30
+    jr nc, handle_keypad_number
+keyboard_interrupt_exit:
+    pop hl                                  ; Restore registers
+    pop de
+    pop bc
+    pop af
+    ei                                      ; Re-enable interrupts
+    ret                                     ; Return from interrupt
+
+clear_keypad:
+    ld hl, keypad1_value                    ; Base address for keypad state
+    ld a, 0x0f                              ; Reset nibble to '1111'
+    or (hl)
+    ld (hl), a                              ; Update first keypad value
+    inc hl                                  ; Move to second keypad value
+    ld a, 0x0f
+    or (hl)
+    ld (hl), a                              ; Update second keypad value
+    jr keyboard_interrupt_exit
+
+handle_keypad_number:
+    ld hl, keypad_table                     ; Base address for keypad mapping
+    sub 0x30                                ; Convert ASCII digit ('0'-'9') to index
+    ld e, a
+    add hl, de                              ; Calculate keypad value address
+    ld b, (hl)                              ; Load mapped keypad value
+    jr set_keypad
+handle_keypad_star:
+    ld b, 0x09                              ; Keypad value for '*'
+    jr set_keypad
+handle_keypad_pound:
+    ld b, 0x06                              ; Keypad value for '#'
+set_keypad:
+    ld a, (current_keypad)                  ; Load current controller index
+    ld e, a
+    ld hl, keypad1_value                    ; Base address for keypad state
+    add hl, de                              ; Calculate specific keypad state address
+    ld a, 0xf0
+    and (hl)                                ; Clear lower nibble in keypad state
+    or b                                    ; Add new keypad value
+    ld (hl), a                              ; Save updated keypad value
+    jr keyboard_interrupt_exit
+
+handle_stick_emulation:
+    ld b, a                                 ; Save scan code
+    cp 0xe8                                 ; Check if SYM key
+    jr z, handle_sym_key
+    and 0x0f                                ; Mask scan code to lower nibble
+    cp 0x04                                 ; Check for page right key
+    jr z, handle_right_trigger
+    cp 0x06                                 ; Check for page left key and arrows
+    jr nc, keyboard_interrupt_exit          ; Ignore if scan code >= 0x06
+    ld e, a
+    ld hl, joystick_bitmask                 ; Base address for joystick bitmask
+    add hl, de                              ; Calculate bitmask address
+    ld c, (hl)                              ; Load joystick bitmask use for setting/unsetting joystick bit
+    ld a, (current_keypad)                  ; Load controller index
+    ld hl, joy1_value                       ; Base address for joystick state
+    ld e, a
+    add hl, de                              ; Add controller index
+    ld a, c                                 ; Load Bitmask into A
+    and (hl)                                ; Clear bit in joystick state (pressed)
+    bit 4, b                                ; Check if scancode is keyup or keydown
+    jr z, store_state                       ; If keydown skip
+    ld a, c                                 ; Load bitmask into A and invert
+    cpl
+    or (hl)                                 ; Set bit in joystick state (released)
+store_state:
+    ld (hl), a                              ; Store updated joystick state
+    jr keyboard_interrupt_exit
+handle_right_trigger:
+    ld a, (current_keypad)                  ; Load controller index
+    ld e, a
+    ld hl, keypad1_value                    ; Base address for keypad state
+    add hl, de                              ; Calculate keypad state address
+    res 6, (hl)                             ; Clear trigger bit (trigger pressed)
+    bit 4, b                                ; Check if scancode was keyup or keydown
+    jr z, keyboard_interrupt_exit
+    set 6, (hl)                             ; Set trigger bit if keyup (trigger released)
+    jr keyboard_interrupt_exit
+handle_sym_key:
+    ld a, (current_keypad)                  ; Toggle current controller index
+    xor 1
+    ld (current_keypad), a
+    ld a, (status_led_state)                ; Toggle check LED state
+    xor 8
+    out (0x00), a                           ; Set new LED state
+    ld (status_led_state), a
+    jp keyboard_interrupt_exit
+
+handle_joystick:
+    ld b, a                                 ; Save scan code
+    and 0x0f                                ; Mask scan code for table offset
+    ld e, a
+    ld hl, joy_table                        ; Load joystick mapping table
+    add hl, de                              ; Calculate joystick value address
+    ld a, (current_keypad)                  ; Get current controller index
+    ld e, a                                 ; Save controller index
+    ld a, (hl)                              ; Load joystick value
+    bit 4, b                                ; Check joystick trigger bit
+    jr z, joystick_set                      ; Skip if not set
+    or 0x40                                 ; Set joystick trigger bit
+joystick_set:
+    cpl                                     ; Invert joystick value
+    ld hl, joy1_value                       ; Base address for joystick state
+    add hl, de                              ; Add controller index
+    ld (hl), a                              ; Store joystick value
+    jp keyboard_interrupt_exit
+
+
+; VDP VSYNC interrupt handler
+.global vdp_vsync_interrupt
+vdp_vsync_interrupt:
+    push af                                 ; Save AF
+    call 0x66                               ; Call NMI interrupt vector
+    in a, (0xA1)                            ; Clear VDP interrupt
+    pop af                                  ; Restore AF
+    ei                                      ; Re-enable interrupts
+    ret                                     ; Return from interrupt
+
+; Null IRQ stub function
+.global nullirq
+nullirq:
+    ei                                      ; Re-enable interrupts
+    ret                                     ; Return from interrupt
+
+; Install interrupt handlers
+; Input: None
+.global install_interrupt_handlers
+install_interrupt_handlers:
+    ld hl, irq_vector_base                  ; Start of the interrupt vector table
+    ld de, nullirq                          ; Address of nullirq function
+    ld b, 0x80                              ; Number of interrupt vector entries
+install_loop:
+    ld (hl), e                              ; Write low byte of nullirq address
+    inc hl                                  ; Increment to next byte
+    ld (hl), d                              ; Write high byte of nullirq address
+    inc hl                                  ; Increment to next entry
+    djnz install_loop                       ; Continue until all entries are filled
+
+    ; Install specific handlers
+    ld hl, irq_vector_base + 4              ; Entry 2 (offset 4)
+    ld de, keyboard_interrupt               ; Address of keyboard_interrupt
+    ld (hl), e                              ; Write low byte
+    inc hl
+    ld (hl), d                              ; Write high byte
+
+    ld hl, irq_vector_base + 6              ; Entry 3 (offset 6)
+    ld de, vdp_vsync_interrupt              ; Address of vdp_vsync_interrupt
+    ld (hl), e                              ; Write low byte
+    inc hl
+    ld (hl), d                              ; Write high byte
+
+    ; Set the interrupt vector base address
+    ld a, irq_vector_base >> 8              ; Load high byte of the vector base address
+    ld i, a                                 ; Store it in the I register
+
+    ; Enable VDP and keyboard interrupts
+    ld a, INTERRUPT_VDP | INTERRUPT_KEYBOARD
+    call set_interrupts
+
+    ; Set Z80 interrupt mode to IM 2
+    im 2                                    ; Enable Interrupt Mode 2
+
+    ret                                     ; Return after setting up the table
+
+; Enable specific interrupts
+; Input: A = Bitmask of interrupts to enable
+.global enable_interrupts
+enable_interrupts:
+    ld hl, current_interrupt_mask           ; Address of the interrupt mask state
+    ld b, (hl)                              ; Load current interrupt mask
+    or b                                    ; Enable specified interrupts in the mask
+    ld (hl), a                              ; Save updated mask
+    push af                                 ; Save A register (input bitmask)
+    ld a, IO_PORT_A                         ; Load address of Port A into A
+    out (AY38910_ADDR), a                   ; Select IO Port A register
+    pop af                                  ; Restore A register (input bitmask)
+    out (AY38910_DATA), a                   ; Write updated interrupt mask to Port A
+    ret                                     ; Return after enabling interrupts
+
+; Disable specific interrupts
+; Input: A = Bitmask of interrupts to disable
+.global disable_interrupts
+disable_interrupts:
+    ld hl, current_interrupt_mask           ; Address of the interrupt mask state
+    ld b, (hl)                              ; Load current interrupt mask
+    cpl                                     ; Invert the bitmask
+    and b                                   ; Disable specified interrupts in the mask
+    ld (hl), a                              ; Save updated mask
+    push af                                 ; Save A register (input bitmask)
+    ld a, IO_PORT_A                         ; Load address of Port A into A
+    out (AY38910_ADDR), a                   ; Select IO Port A register
+    pop af                                  ; Restore A register (input bitmask)
+    out (AY38910_DATA), a                   ; Write updated mask to Port A
+    ret                                     ; Return after disabling interrupts
+
+; Set specific interrupts
+; Input: A = Bitmask of interrupts to set
+.global set_interrupts
+set_interrupts:
+    ld hl, current_interrupt_mask           ; Address of the interrupt mask state
+    ld (hl), a                              ; Overwrite current interrupt mask
+    push af                                 ; Save A register (input bitmask)
+    ld a, IO_PORT_A                         ; Load address of Port A into A
+    out (AY38910_ADDR), a                   ; Select IO Port A register
+    pop af                                  ; Restore A register (input bitmask)
+    out (AY38910_DATA), a                   ; Write new interrupt mask to Port A
+    ret                                     ; Return after setting interrupts
+
+.section .data, "adrw"
+
+current_interrupt_mask: .byte 0x00          ; Local state variable for the interrupt mask
+status_led_state: .byte 0x03                ; State of control register (used front panel LED control)
+
+joystick_bitmask:                           ; Table with bitmasks used to set or clear joystick bits
+    .byte 0xFD, 0xF7, 0xFE, 0xFB, 0x00, 0xBF
+
+joy_table:                                  ; Table to convert NABU joystick to coleco joystick
+    .byte 0x80, 0x88, 0x84, 0x8C
+    .byte 0x82, 0x8A, 0x86, 0x8E
+    .byte 0x81, 0x89, 0x85, 0x8D
+    .byte 0x83, 0x8B, 0x87, 0x8F
+
+keypad_table:                               ; Table for converting NABU keyboard to coleco keypad
+    .byte 0x0A, 0x0D, 0x07, 0x0C, 0x02
+    .byte 0x03, 0x0E, 0x05, 0x01, 0x0B
+
+current_keypad: .byte 0x00                  ; Byte that controls which controller is active
+
+.global keypad1_value
+keypad1_value: .byte 0x7F                   ; Value of keypad 1
+keypad2_value: .byte 0x7F                   ; Value of keypad 2
+
+.global joy1_value
+joy1_value: .byte 0x7F                      ; Value of joystick 1
+joy2_value: .byte 0x7F                      ; Value of joystick 2
+

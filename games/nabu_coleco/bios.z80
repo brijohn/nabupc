@@ -1,0 +1,5403 @@
+; Original disassembly and optimizations done by Bruce Tomlin
+;    http://xi6.com/code/coleco/coleco29.asm
+;
+;***************************************
+;
+; Note: Markers like [1] indicate bytes that can be
+;	saved by obvious (or nearly so) optimizations,
+;	and [0] indicates that cycles can be saved.
+;
+;	Some of the optimizations can't be made because
+;	they will change locked address, and some are
+;	so non-obvious that I can't figure out what I
+;	was thinking when I marked them!
+;
+;***************************************
+
+; LOCKED ADDRESSES -- THESE *MUST* BE CORRECT OR SOME CARTRIDGES WILL NOT RUN!
+;
+; In order to allow easy verification, these addresses have labels
+; starting with an 'A' and containing the locked address.
+;
+; These are the important addresses (like vectors), plus a few used by the
+; small-time offenders.
+;
+;	0000	0066	080B	18A3
+;	0008	0069	08C0	18D4.
+;	0010	006A	143B	18F7*
+;	0018	006C	144D	1968
+;	0020	01B1*	1463	196B
+;	0028	01D5	14B4	1CCA.
+;	0030	023B.	14C1	1D43
+;	0038	02EE	14C3	1D47
+;	003B.	07E8*	15A3	1F61
+;			158B*
+;
+; ...and these are the addresses used by three of the four Interphase
+; games, most of which have vectors available.
+;
+;	0213.	114A*.	1BAA*	1D3E*.
+;	025E.	18E9.	1C27.	1D57.
+;	027F.	1979*.	1C4F*	1D5A.
+;	0300.	1B1D*.	1C82*.	1D60*.
+;	1105*	1BA3.	1D01*.	1D66*.
+;
+; These two were called from Boulder Dash, but the call instructions
+; themselves may be unreachable from the rest of the game.
+;
+;	01C1*	026A*
+;
+; Any address with a '*' is only referenced by ONE game that I can find.
+; Note that Interphase games account for 11 out of 15 of these.  Any address
+; with a '.' has a vector available.  Note also that all but two Interphase-
+; only addresses (18 of 20) have vectors!  Oh the humanity!
+;
+; These are in the "OS7SYM" file which was provided to Adam programmers:
+;
+;FREQ_SWEEP          EQU     000FCH !
+;ATN_SWEEP           EQU     0012FH !
+;DECLSN              EQU     00190H !
+;DECMSN              EQU     0019BH !
+;MSNTOLSN            EQU     001A6H !
+
+
+;***************************************
+; Offsets into data blocks
+;***************************************
+
+;		Offsets into RawCtlState
+
+.set        RawCtlLeft, 0x00		; raw left controller state
+.set        RawCtlRight, 0x0A		; raw right controller state
+
+;		Offsets into RawCtlLeft and RawCtlRight
+
+.set        RawCtlLFBit, 0x00		; previous left fire bit
+.set        RawCtlLFState, 0x01		; left fire button state
+.set        RawCtlDBits, 0x02		; previous directional bits
+.set        RawCtlDState, 0x03		; directionals state
+;		EQU	04H		; unused?
+;		EQU	05H		; unused?
+.set        RawCtlRFBit, 0x06		; previous right fire bit
+.set        RawCtlRFState, 0x07		; right fire button state
+.set        RawCtlKPBit, 0x08		; previous keypad bits
+.set        RawCtlKPState, 0x09		; keypad state
+
+;		Offsets into CtlState table
+
+.set        CtlStateLFlag, 0x00		; left controller flags
+.set        CtlStateRFlag, 0x01		; right controller flags
+.set        CtlStateLeft, 0x02		; left controller state
+.set        CtlStateRight, 0x07		; right controller state
+
+;		CtlStateLF/CtlStateRF bits
+
+.set        CtlCheckMe, 0x80	; 7	; if =0, do not check this ctrl at all
+;		EQU	40H	; 6	; unused?
+;		EQU	20H	; 5	; unused?
+.set        CtlCheckKP, 0x10	; 4	; check keypad
+.set        CtlCheckRFire, 0x08	; 3	; check right fire button
+.set        CtlCheckSpinner, 0x04	; 2	; check spinner
+.set        CtlCheckDir, 0x02	; 1	; check directionals
+.set        CtlCheckLFire, 0x01	; 0	; check left fire button
+
+;		Offsets into CtlStateLeft and CtlStateRight
+
+.set        CtlStateLFire, 0x00		; left fire button
+.set        CtlStateDir, 0x01		; directionals
+.set        CtlStateSpin, 0x02		; spinner value
+.set        CtlStateRFire, 0x03		; right fire button
+.set        CtlStateKey, 0x04		; key code
+
+;***************************************
+; I/O port addresses
+;***************************************
+
+.set KP_SELECT, 0x3000                ; Keypad select emulation address
+.set JOY_SELECT, 0x3003               ; Joystick select emulation address
+.set READ_JOY1, 0x3006                ; Joystick 1 input emulation address
+.set READ_JOY2, 0x3009                ; Joystick 2 input emulation address
+.set WRITE_SOUND, 0x300C              ; Sound chip output emulation address
+.set IO_VDP_Data, 0xA0                ; VDP data port
+.set IO_VDP_Addr, 0xA1                ; VDP VRAM address output port
+.set IO_VDP_Status, 0xA1              ; VDP status input port
+
+.set          O, 0xFF           ;  filler for unused bytes
+
+.section .ram.1, "aurw"
+Pad1:           .zero 12		; default CtlState storage?
+Pad2:           .zero 20
+SndArray:       .zero 2		; music array pointer?
+NoiseP:         .zero 2		; Pointer to program for noise generator
+Tone1P:         .zero 2		; Pointer to program for tone1 generator
+Tone2P:         .zero 2		; Pointer to program for tone2 generator
+Tone3P:         .zero 2		; Pointer to program for tone3 generator
+NoiseCtlShad:   .zero 1		; Noise control register shadow
+
+.section .ram.2, "aurw"
+; .org 0x3B9
+.org 0x38E
+
+Stack:          .zero 1		; Default initial stack pointer
+ParmArea:       .zero 9		; Parameter storage for PCOPY parameters
+VDP0Shad:       .zero 1		; VDP register 0 shadow
+VDP1Shad:       .zero 1		; VDP register 1 shadow
+Pad3:           .zero 1		; unused?
+D73C6:          .zero 1		; flag byte?
+WrtRAMSprt:     .zero 1		; BlkWrtVRAM to RAM sprite attr table if =1
+RandSeed:       .zero 2		; Random number seed
+D73CA:          .zero 1		; unknown
+D73CB:          .zero 1		; unknown
+D73CC:          .zero 1		; unknown
+D73CD:          .zero 2		; unknown
+D73CF:          .zero 2		; unknown
+D73D1:          .zero 2		; unknown
+TimerList:      .zero 2		; Pointer to timer list
+TimerAux:       .zero 2		; Pointer to end of timer aux storage
+RawCtlState:    .zero 20		; Raw controller state table (2 x 10 bytes)
+PulseCnt1:      .zero 1		; Pulse counter #1
+PulseCnt2:      .zero 1		; Pulse counter #2
+Pad4:           .zero 1		; unused?
+Joy1Shad:       .zero 1		; shadow for joystick #1
+Joy2Shad:       .zero 1		; shadow for joystick #2
+Key1Shad:       .zero 1		; shadow for keypad #1
+Key2Shad:       .zero 1		; shadow for keypad #2
+.set            VDPBaseShad, $
+; VDPBaseShad	EQU	$		; shadow for VDP table base addresses
+SprtTabShad:    .zero 2		;   shadow for sprite table VRAM base addr
+SprtPatTabShad: .zero 2		;   shadow for sprite pattern generator VRAM base addr
+NameTabShad:    .zero 2		;   shadow for name table VRAM base address
+PatGenTabShad:  .zero 2		;   shadow for pattern generator VRAM base addr
+ClrTabShad:     .zero 2		;   shadow for color table VRAM base address
+Pad5:           .zero 2		; unused?
+D73FE:          .zero 2		; temp3
+
+.section .cart, "aurw"
+Cart_Sig:       .zero 2		; AA55 = title screen, 55AA = no screen
+RamSprtTab:     .zero 2		; RAM sprite attribute table pointer
+RAMSprtIdx:     .zero 2		; sprite index table pointer
+VDP_Temp:       .zero 2		; pointer to temp image storage (up to 40 bytes used)
+CtlState:       .zero 2		; pointer to controller state table (2 + 2x5 bytes)
+Cart_Start:     .zero 2		; start of cart code
+V_RST_08H:      .zero 3		; RST 08H vector
+V_RST_10H:      .zero 3		; RST 10H vector
+V_RST_18H:      .zero 3		; RST 18H vector
+V_RST_20H:      .zero 3		; RST 20H vector
+V_RST_28H:      .zero 3		; RST 28H vector
+V_RST_30H:      .zero 3		; RST 30H vector
+V_RST_38H:      .zero 3		; RST 38H vector
+V_NMI:          .zero 3		; NMI vector (vertical blank interrupt)
+Cart_Title:     .zero 0		; Title string "LINE 3/LINE 2/yyyy"
+
+.section .text, "acrx"
+A0000:
+	ld          sp, Stack	; Initialize stack pointer
+	jr          L006E
+
+;***************************************
+; These are the RST vectors, mixed with some (formerly) wasted bytes
+;***************************************
+P_AddSound:
+P_StopTimer:
+P_TestTimer:
+P_InitRAMSprt:
+P_CopyRAMSprt:
+	.byte       1
+	.word       1
+
+A0008:
+	jp          V_RST_08H
+
+P_InitSound:
+P_StartTimer:
+P_BaseLoad:
+	.byte       2
+	.word       1, 2
+
+A0010:
+	jp          V_RST_10H
+
+D0482:
+	.byte       2
+	.word       -2, 1
+
+A0018:
+	jp          V_RST_18H
+
+D064F:
+	.byte       2
+	.word       1, -2
+
+A0020:
+	jp          V_RST_20H
+
+D06C1:
+	.byte       2
+	.word       2, 1
+
+A0028:
+	jp          V_RST_28H
+
+P_InitTimers:
+	.byte       2
+	.word       2, 2
+
+A0030:
+	jp          V_RST_30H
+
+P_WriteReg:
+	.byte       2
+	.word       1, 1
+
+A0038:
+	jp          V_RST_38H
+
+;***************************************
+;	1FFD	Random
+;
+; Returns a random number in A.  This routine apparently
+; uses a pseudo-random shift register algorithm based on
+; the XOR of bits 8 and 15.
+;***************************************
+A003B:
+_Random:
+	ld          hl, (RandSeed)
+	bit         7, h		; Set the carry flag to
+	jr          z, L0048		;   bit 8 XOR bit 15
+	bit         0, h
+	jr          z, L004C
+L004F:
+	or          a		; Clear carry flag
+L0050:
+	rl          l		; Rotate the carry into HL
+	rl          h
+	ld          (RandSeed), hl	; Update the random number seed
+	ld          a, l		; Return the LSB
+	ret
+
+L0048:
+	bit         0, h
+	jr          z, L004F
+D1AC4:          ; DB '7'
+L004C:
+	scf			; Set carry flag
+	jr          L0050
+
+;	DE = DE + IX
+
+L0478:
+	push        ix
+	ex          (sp), hl
+L047C:
+	add         hl, de
+	ex          de, hl
+	pop         hl
+	ret
+
+P_WrtVRAM:
+P_ReadVRAM:
+	.byte       3
+	.word       -2, 2, 2
+
+	.byte       O
+
+;***************************************
+;	NMI vector
+;***************************************
+A0066:
+	jp          V_NMI
+
+;***************************************
+; I'm not really sure what these are for, but aside from the
+; jump vectors at the end of the ROM, they are probably the
+; only ROM addresses that you should reference directly.
+;***************************************
+A0069:          .byte	60		; this might mean a 60hz display (NTSC)
+A006A:          .word   D16AB		; this points to the font bitmap for 'A'
+A006C:          .word   D1623		; this points to the font bitmap for '0'
+
+;***************************************
+;
+; First part of cold start code
+;
+;***************************************
+L006E:
+	ld          hl, (Cart_Sig)	; Check first word of cart for 55AAH
+	ld          a, l		;   8000=55H and 8001=AAH
+	cp          0x55
+	jr          nz, L0081
+	ld          a, h
+	cp          0xAA
+	jr          nz, L0081
+	ld          hl, (Cart_Start)	; If 55H/AAH, jump into cartridge
+	ei
+	jp          (hl)
+L0081:
+	call        NoSound		; Turn off sound
+	.set        D1AC0, $+1		; DB '3'
+	ld          hl, 0x0033	; Initialize random seed
+	ld          (RandSeed), hl
+	call        InitCtlState	; Clear all controller state flags
+;	xor         a		; (A-reg is already = 00H)
+D1ABF:          ; DB '2'
+	ld          (D73C6), a	; Clear some unknown flags
+	ld          (WrtRAMSprt), a	; Clear BlkWrtVRAM RAM sprite attr flag
+	jp          L1319		; Go display copyright screen
+
+;***************************************
+;	PCopy
+;
+; This routine copies in-line paramters for the subroutines.
+;
+; The descriptor table entries are 2 bytes each.  The first word
+; of the descriptor list is the number of descriptors in the list.
+;
+; (Note: for optimization purposes, the number of descriptors is now a byte)
+;
+; If an entry is positive, it contains the number of bytes to copy
+; to the storage area.
+;
+; The parameters are 2 bytes each and normally contain the
+; address of the data to be copied into the storage area.
+;
+; If a descriptor table entry is negative, the next parameter
+; is taken as a 2-byte literal and stored directly in the data area.
+;
+; If a parameter word is zero, the next parameter word contains the
+; address of the real parameter word to use.  This is done before
+; checking for a negative descriptor table entry.
+;
+; ENTRY	BC points to parameter descriptor table
+;	DE points to parameter storage area
+;	(SP+2) = return address of calling routine
+; EXIT:	DE points to first unused byte of storage area
+;***************************************
+PCopy:
+	pop         hl		; Swap caller's return address
+	ex          (sp), hl		;   (the parameter pointer) to
+	push        hl		;   the top of the stack
+	ld          a, (bc)		; HL = first descriptor table word
+	ld          l, a
+	inc         bc
+	ld          h, 0x00
+	ex          (sp), hl		; Swap parameter pointer
+	push        de		;   with storage pointer
+
+;	Get next parameter word
+
+L00A3:
+	ld          e, (hl)		; DE = next parameter word
+	inc         hl
+	ld          d, (hl)
+	inc         hl
+	push        hl		; Save parameter pointer
+	ld          a, e		; Check if parameter = 0
+	or          d
+	jr          nz, L00B7	; Branch if = 0
+
+;	Handle zero parameter word
+
+	pop         hl		; Get back parameter pointer
+	ld          e, (hl)		; DE = next parameter word
+	inc         hl
+	ld          d, (hl)
+	inc         hl
+	push        hl		; Save parameter pointer
+	ex          de, hl		; DE = (DE)
+	ld          e, (hl)
+	inc         hl
+	ld          d, (hl)
+
+;	Check sign of descriptor word
+
+L00B7:
+	inc         bc		; Get MSB of descriptor
+	ld          a, (bc)
+	rlca
+	jr          nc, L00DA	; Branch if positive
+
+;	Handle negative descriptor word
+
+	inc         bc		; Point to next descriptor word
+	pop         hl		; HL = parameter pointer
+	ex          (sp), hl		; Swap with storage pointer
+	ld          (hl), e		; Store DE in storage area
+	inc         hl
+	ld          (hl), d
+	inc         hl
+L00C4:
+	pop         de		; DE = storage pointer
+	ex          (sp), hl		; Swap it with parameter counter
+	dec         hl		; Decrement count
+	ld          a, h		; Test for zero count
+	or          l
+	jr          z, L00D6
+L00D0:
+	ex          (sp), hl		; Swap counter back on stack
+	push        hl		; Put storage pointer back on stack
+	ex          de, hl		; HL = parameter pointer
+	jr          L00A3		; Go back for next parameter
+
+L00D6:
+	pop         hl		; Get storage pointer
+	ex          de, hl		; DE = storage pointer, HL = parm pointer
+	ex          (sp), hl		; Put parm pointer back on stack
+	jp          (hl)		; Return to caller
+
+;	Handle positive descriptor word
+
+L00DA:
+	pop         hl		; Swap parameter pointer
+	ex          (sp), hl		;   and storage pointer
+	push        hl
+	rrca			; Restore value of MSB
+	ld          h, a		; H = MSB
+	dec         bc		; L = LSB
+	ld          a, (bc)
+	ld          l, a
+	ex          (sp), hl		; HL = storage pointer, TOS = count
+	inc         bc		; Point to next descriptor
+	inc         bc
+L00E5:
+	ld          a, (de)		; Copy next parameter byte
+	ld          (hl), a
+	inc         hl
+	inc         de
+	ex          (sp), hl		; HL = count, TOS = storage pointer
+	dec         hl		; Decrement counter
+	ld          a, h		; Loop until count is zero
+	or          l
+	jr          z, L00F8		; Branch if count = 0
+L00F4:
+	ex          (sp), hl		; HL = storage pointer, TOS = count
+	jr          L00E5		; Go back to copy next byte
+
+L00F8:
+	pop         hl		; HL = storage pointer
+	jr          L00C4		; Go check for end of parameter list
+
+;***************************************
+;
+; SOUND ROUTINES BEGIN HERE
+;
+;***************************************
+
+;	Process the duration and twang values?
+
+L00FC:
+	ld          a, (ix+0x07)
+	or          a
+	jr          nz, L010C
+	ld          a, (ix+0x05)
+	dec         a
+	ret         z
+	ld          (ix+0x05), a
+	ret
+
+L010C:
+	push        ix
+	pop         hl
+	ld          de, 0x0006
+	add         hl, de
+	call        L0190
+	ret         nz
+	call        L01A6
+	dec         hl
+	ld          a, (hl)
+	dec         a
+	ret         z
+	ld          (hl), a
+	dec         hl
+	dec         hl
+	ld          a, (ix+0x07)
+	call        A01B1
+	inc         hl
+	res         2, (hl)
+	jr          L015D
+
+;	Process the decay?
+
+L012F:
+	ld          a, (ix+0x08)
+	or          a
+	ret         z
+	push        ix
+	pop         hl
+	ld          de, 0x0009
+	add         hl, de
+	call        L0190
+	ret         nz
+	call        L01A6
+	dec         hl
+	call        L0190
+	jr          z, L0161
+	ld          a, (hl)
+	and         0xF0
+	ld          e, a
+	dec         hl
+	dec         hl
+	dec         hl
+	dec         hl
+	ld          a, (hl)
+	and         0xF0
+	add         a, e
+	ld          e, a
+	ld          a, (hl)
+	and         0x0F
+	or          e
+	ld          (hl), a
+L015D:
+	or          0xFF
+	ret
+
+D1AC3:          ; DB '6'
+L0161:
+	ld          (hl), 0x00
+	ret
+
+;***************************************
+;
+; Put up the introduction screen
+;
+;***************************************
+L1352:
+	pop             hl                ; End of list, clean up
+
+	ld              hl, Title_Msgs    ; Put up "COLECOVISION" title screen
+	call            ScrnMsgs
+
+	ld              hl, A143B         ; Point to color table
+;		LD	DE,0000H	;   Table index
+	ld              d, b              ;   (BC=0 from ScrnMsgs)
+	ld              e, c
+	ld              iy, 0x0012        ;   Byte count
+	call            _BlkWrtVRAM4      ; Color table
+	ld              bc, 0x01C0        ; Unblank the screen
+	call            _WriteReg
+	ld              hl, Cart_Sig      ; Check first 2 bytes of cartridge
+	ld              a, (hl)           ; If 8000<>AA or 8001<>55,
+	cp              0xAA
+	jr              nz, L13B7         ;   put up "please turn machine off
+	inc             hl                ;   before inserting cartridge" msg
+	ld              a, (hl)
+	cp              0x55
+L13B7:
+	jp              nz, L13FF
+
+	ld              hl, Cart_Title    ; Find name string
+	ld              d, h              ; Display address = first string
+	ld              e, l
+	call            L1946             ; Scan for first '/'
+	push            hl                ; Save address of first '/'
+	ld              hl, 0x0201        ; Screen address for first string
+	call            L1951             ; Display first string centered
+
+	pop             hl                ; Recover address of first '/'
+	inc             hl                ; Adjust for second string
+	ld              d, h              ; Display address = second string
+	ld              e, l
+	call            L1946             ; Scan for second '/'
+	push            hl                ; Save address of second '/'
+	ld              hl, 0x01C1        ; Screen address for second string
+	call            L1951             ; Display second string centered
+
+	pop             hl                ; Recover address of second '/'
+	inc             hl                ; Adjust for third string
+	ld              de, 0x02AC        ; Screen address for copyright date
+	ld              iy, 0x0004        ; 4 bytes
+	call            _BlkWrtVRAM2
+
+	call            A1968             ; "Respect the seven second delay we
+	                                  ;  use" - Donald Fagen, "The Nightfly"
+
+	ld              bc, 0x0180        ; Blank screen
+	call            _WriteReg
+
+	ld              hl, (Cart_Start)  ; Get start address
+	ei
+	jp              (hl)              ; Jump into cartridge
+
+	.byte           O,O,O,O,O,O,O,O,O
+
+
+;	Add A (signed byte) to (HL)
+
+A01B1:
+	ld              b, 0x00           ; sign-extend A -> BA
+	bit             7, a
+	jr              z, L01B9
+	dec             b
+L01B9:
+	add             a, (hl)
+	ld              (hl), a
+	inc             hl
+	ld              a, (hl)
+	adc             a, b
+	ld              (hl), a
+	dec             hl
+	ret
+
+.byte               O
+
+; Index into the 7020H array using B as the index
+; B = 1 returns HL = (7020H)+2 and IX = (HL)
+
+A01C1:
+	ld              hl, (SndArray)    ; HL = (7020H)-2 + B*4
+	dec             hl
+	dec             hl
+	ld              c, b
+	ld              b, 0x00
+	add             hl, bc
+	add             hl, bc
+	add             hl, bc
+	add             hl, bc
+	ld              e, (hl)           ; IX = (HL)
+	inc             hl
+	ld              d, (hl)
+	push            de
+	pop             ix
+	ret
+
+.byte               O
+
+;	Update function code?  (Used by Carnival!)
+
+A01D5:
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	ld              a, (de)
+	and             0x3F
+	ld              b, a
+	ld              a, (ix+0x00)
+	and             0xC0
+	or              b
+	ld              (ix+0x00), a
+	ret
+
+;	Get command list pointer?
+
+L01E9:
+	ld              a, (ix+0x00)
+	cp              0xFF
+	ret             z
+	and             0x3F
+	cp              0x3E
+	ret             nz
+	push            ix
+	pop             hl
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ex              de, hl
+	ret
+
+.byte               O,O,O,O,O,O
+
+;***************************************
+;	1FB2	PInitSound
+;
+; Parameter block version of 1FEE
+;
+; Parm 1 (byte) = number of array elements
+; Parm 2 (word) = pointer to array of pointers
+;
+;***************************************
+_PInitSound:
+	ld              bc, P_InitSound
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              b, a
+	ld              hl, (ParmArea+1)
+
+;***************************************
+;	1FEE	InitSound
+;
+; Initializes 7020 with HL, clears out the array pointed to by
+; (HL+2) to contain an FF every ten bytes for B times, then stores
+; a zero at the end.  Then the sound variables are initialized and
+; the sound chip is silenced.
+;
+; Array at 7020H contains a list of four-byte entries.  The
+; second word of the list contains a pointer to a list of
+; 10-byte blocks, and the second word of each other entry
+; probably contains a pointer into this list as well.  The
+; first word of each four-byte entry is apparently a pointer
+; to a list of command bytes.
+;
+; Each 10 byte block has the following format:
+;
+; +0	bits 0-5 = function code (3EH is special)
+;	bits 6-7 = channel code (0=noise, else tone channel number)
+; +1,+2	pointer to list of command bytes
+; +3	low 8 bits of frequency
+; +4	bits 0-3 = high 2 bits of frequency or noise control
+;	bits 4-7 = amplitude (00H=max, 0FH=off)
+; +5	duration counter?
+; +6	bits 0-3 = twang time counter?
+;	bits 4-7 = twang time?
+; +7	twang offset? (signed byte)
+; +8	bits 0-3 = decay high counter?
+;	bits 4-7 = decay high nibble?
+; +9	bits 0-3 = decay low counter?
+;	bits 4-7 = decay low nibble?
+;
+; ENTRY	B = number of array elements
+;	HL = pointer to array of pointers
+;***************************************
+A0213:
+_InitSound:
+	ld              (SndArray), hl
+	inc             hl
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ex              de, hl
+	ld              de, 0x000A
+.set     NoSoundP, $+1                ; null sound program = single FFH byte
+L0220:
+	ld              (hl), 0xFF
+	add             hl, de
+	djnz            L0220
+	ld              (hl), d
+	call            L0297
+	ld              a, (hl)           ; = 0FFH
+	ld              (NoiseCtlShad), a
+	jr              A023B
+
+.byte               O,O,O,O,O,O,O,O,O,O
+.byte               O,O,O
+
+;***************************************
+;	1FD6	NoSound
+;
+; This routine silences the sound chip.
+;***************************************
+A023B:
+_NoSound:
+	ld              a, 0x9F
+	call            WRITE_SOUND
+	ld              a, 0xBF
+	call            WRITE_SOUND
+	ld              a, 0xDF
+	call            WRITE_SOUND
+	ld              a, 0xFF
+	call            WRITE_SOUND
+	ret
+
+.byte               O
+
+;***************************************
+;	1FB5	PAddSound
+;
+; Parameter block version of 1FF1
+;
+; Parm 1 (byte) = index into array at 7020H
+;***************************************
+_PAddSound:
+	ld              bc, P_AddSound
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              b, a
+
+;***************************************
+;	1FF1	AddSound
+;
+; This routine seets up a new entry in the sound list. (?)
+;
+; ENTRY	B = index into array at 7020H, 1 = first entry
+;***************************************
+A025E:
+_AddSound:
+	push            bc
+	call            A01C1
+	ld              a, (ix+0x00)
+	and             0x3F
+	pop             bc
+	cp              b
+	ret             z
+A026A:
+	ld              (ix+0x00), b
+	dec             hl
+	dec             hl
+	ld              d, (hl)
+	dec             hl
+	ld              e, (hl)
+	ld              (ix+0x01), e
+	ld              (ix+0x02), d
+	call            L035F
+	jr              L0295
+
+.byte               O,O
+
+;***************************************
+;	1FF4	UpdateSound
+;
+; This routine updates the current sound pointers
+; by searching through the sound list.
+;***************************************
+A027F:
+_UpdateSound:
+	ld              b, 0x01
+	call            A01C1
+L0284:
+	xor             a
+	cp              (ix+0x00)
+	ret             z
+	call            L02D6
+	ld              de, 0x000A
+	add             ix, de
+	jr              L0284
+
+; Update stream pointers
+
+L0295:
+	call            L0297
+	push            ix
+
+	ld              b, 0x01
+	call            A01C1
+L02AB:
+	ld              a, (ix+0x00)
+	or              a
+	jr              z, L02D3
+	inc             a
+	jr              z, L02CB
+	ld              a, (ix+0x00)
+	and             0xC0
+	rlca
+	rlca
+	rlca
+	ld              e, a
+	ld              d, 0x00
+	ld              hl, NoiseP
+	add             hl, de
+	push            ix
+	pop             de
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+L02CB:
+	ld              de, 0x000A
+	add             ix, de
+	jr              L02AB
+
+L02D3:
+	pop             ix
+	ret
+
+L02D6:
+	call            L01E9
+	cp              0xFF
+	ret             z
+	cp              0x3E
+	jr              nz, L02E6
+	ld              de, 0x0007
+	add             hl, de
+	jp              (hl)
+
+L0297:
+	ld              hl, NoSoundP
+	ld              (NoiseP), hl
+	ld              (Tone1P), hl
+	ld              (Tone2P), hl
+	ld              (Tone3P), hl
+	ret
+
+.byte               O,O,O
+
+L02E6:
+	call            L012F
+	call            L00FC
+	ret             nz
+A02EE:
+	ld              a, (ix+0x00)      ; (called by Carnival)
+	push            af
+	call            L035F
+	pop             bc
+	ld              a, (ix+0x00)
+	cp              b
+	ret             z
+	jr              L0295
+
+D1AC6: .byte        "TWO"
+
+;***************************************
+;	1F61	DoSound
+;
+; This updates the sound chip registers based on the
+; current sound array pointers for each channel.
+;***************************************
+A0300:
+_DoSound:
+	ld              a, 0x9F
+	ld              c, 0x90
+.set    D0587, $+1
+	ld              d, 0x80
+	ld              ix, (Tone1P)
+	call            L034E
+	ld              a, 0xBF
+	ld              c, 0xB0
+	ld              d, 0xA0
+	ld              ix, (Tone2P)
+	call            L034E
+	ld              a, 0xDF
+	ld              c, 0xD0
+	ld              d, 0xC0
+	ld              ix, (Tone3P)
+	call            L034E
+	ld              a, 0xFF
+	ld              c, 0xF0
+	ld              ix, (NoiseP)
+	ld              e, (ix+0x00)
+	inc             e
+	jr              z, L0335
+	call            L0164
+	ld              a, (ix+0x04)
+	and             0x0F
+	ld              hl, NoiseCtlShad
+	cp              (hl)
+	ret             z
+	ld              (hl), a
+	ld              c, 0xE0
+
+;	Send amplitude or noise control to sound chip
+
+L0164:
+	ld              a, (ix+0x04)
+	bit             4, c
+	jr              z, L016F
+	rrca
+	rrca
+	rrca
+	rrca
+L016F:
+	and             0x0F
+	or              c
+L0335:
+	jp              WRITE_SOUND
+
+L034E:
+	ld              e, (ix+0x00)
+	inc             e
+	jr              z, L0335
+	call            L0164
+	jp              L0175
+ 
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O
+
+L035F:
+	ld              a, (ix+0x00)
+	and             0x3F
+	push            af
+	ld              (ix+0x00), 0xFF
+	ld              l, (ix+0x01)
+	ld              h, (ix+0x02)
+	ld              a, (hl)
+	ld              b, a
+	bit             5, a
+	jr              z, L0391
+	push            bc
+	and             0x1F
+	inc             hl
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	ld              (ix+0x04), 0xF0
+	ld              (ix+0x05), a
+	jr              L03F0
+
+L0391:
+	bit             4, a
+	jr              z, L03A4
+	bit             3, a
+	jr              z, L039E
+	pop             bc
+	jp              _AddSound
+
+L039E:
+	ld              a, 0xFF
+	push            af
+	jr              L03F8
+
+L03A4:
+	and             0x3C
+	cp              0x04
+	jr              nz, L03D2
+	pop             iy
+	push            iy
+	push            bc
+	inc             hl
+	ld              e, (hl)
+	ld              (ix+0x01), e
+	inc             hl
+	ld              d, (hl)
+	ld              (ix+0x02), d
+	inc             hl
+	push            iy
+	pop             af
+	push            de
+	pop             iy
+	ld              de, L03C6
+	push            de
+	jp              (iy)
+
+L03C6:
+	ld              de, 0x0007
+	add             iy, de
+	ld              de, L0461
+	push            de
+	jp              (iy)
+
+L03D2:
+	push            bc
+	ld              a, b
+	and             0x03
+	jr              nz, L03FA
+	inc             hl
+	inc             hl
+	inc             hl
+	inc             hl
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	dec             hl
+	ld              de, 0x0005
+	call            L0478             ; DE = DE + IX
+	ld              bc, 0x0003
+	lddr
+L03F0:
+	ld              (ix+0x07), 0x00
+L03F4:
+	ld              (ix+0x08), 0x00
+L03F8:
+	jr              L0461
+
+L03FA:
+	dec             a                 ; CP 01H
+	jr              nz, L0419
+	ld              de, 0x0006
+	add             hl, de
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	dec             hl
+	inc             e
+	call            L0478             ; DE = DE + IX
+	ld              bc, 0x0005
+	lddr
+	jr              L03F4
+
+L0419:
+	dec             a                 ; CP 02H
+	jr              nz, L0445
+	ld              de, 0x0006
+	add             hl, de
+	pop             af
+	push            af
+	and             0xC0
+	jr              nz, L0429
+	dec             hl
+L0429:
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	dec             hl
+	ld              e, 0x09
+	call            L0478             ; DE = DE + IX
+	ld              bc, 0x0002
+	lddr
+	xor             a
+	ld              (de), a
+	dec             de
+	dec             de
+	ld              c, 0x03
+	lddr
+	jr              L0461
+
+L0445:
+	ld              de, 0x0008
+	add             hl, de
+	ld              (ix+0x01), l
+	ld              (ix+0x02), h
+	dec             hl
+	inc             e
+	call            L0478             ; DE = DE + IX
+	ld              bc, 0x0007
+	lddr
+L0461:
+	push            ix
+	pop             hl
+	pop             af
+	pop             bc
+	cp              0xFF
+	ret             z
+	ld              d, a
+	and             0x3F
+	cp              0x04
+	jr              nz, L0472
+	ld              b, 0x3E
+L0472:
+	ld              a, d
+	and             0xC0
+	or              b
+	ld              (hl), a
+	ret
+
+;***************************************
+;
+; VIDEO ROUTINES BEGIN HERE
+;
+;***************************************
+
+;***************************************
+;	1F64	
+;
+; Parameter block version of 1FF7
+;
+; Parm 1 (lit)  = ?
+; Parm 2 (byte) = ?
+;***************************************
+L0488:
+	ld              bc, D0482
+	ld              de, ParmArea
+	call            PCopy
+	ld              hl, (ParmArea)
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ex              de, hl
+	ld              a, (ParmArea+2)
+	or              a                 ; (clears carry)
+	jr              z, L04A3
+	scf
+
+;***************************************
+;	1FF7	
+;
+; ENTRY	HL = ?
+;	C-flag = ?
+;***************************************
+L04A3:
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	ld              a, 0x00           ; note: must preserve carry here!
+	ld              (bc), a
+	ld              a, (de)
+	push            af
+	and             0x0F
+	jr              z, L04E7
+	dec             a
+	jr              z, L05F1
+	dec             a
+	jr              z, L0600
+	dec             a
+	jr              z, L0600
+	dec             a
+	jr              nz, L04E5
+
+; 04A3/1FF7 Function 4
+
+L04C6:
+	ld              a, (de)
+	rra
+	rra
+	rra
+	rra
+	and             0x0F
+	ld              b, a
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	or              a
+	jr              z, L04E5
+L04D5:
+	pop             af
+	push            af
+	push            hl
+	push            bc
+	ex              de, hl
+	call            L04A3
+	pop             bc
+	pop             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	djnz            L04D5
+L04E5:
+	pop             af
+	ret
+
+; 04A3/1FF7 Function 1
+
+L05F1:
+	call            L0572
+	inc             de
+	ld              a, (de)
+	ld              (iy+0x05), a
+	inc             de
+	ld              a, (de)
+	ld              (iy+0x06), a
+	pop             af
+	ret
+
+; 04A3/1FF7 Functions 2 & 3
+
+L0600:
+	inc             bc
+	inc             bc
+	inc             bc
+	inc             bc
+	inc             bc
+	ex              de, hl
+	inc             hl
+	ld              a, (hl)
+	ld              e, a
+	ld              d, 0x00
+	push            de
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	add             a, (hl)
+	ld              (bc), a
+	ld              c, (hl)
+	ld              b, 0x00
+	push            bc
+	pop             iy
+	ex              de, hl
+	pop             de
+	pop             af
+	ret             nc
+	ld              a, 0x01           ; Sprite pattern gen table
+	jp              _BlkWrtVRAM
+
+; 04A3/1FF7 Function 0
+
+L04E7:
+	call            L0572
+	ld              a, (de)
+	ld              l, a
+	inc             de
+	ld              a, (de)
+	add             a, l
+	ld              (iy+0x05), a
+	ld              h, 0x00
+	pop             af
+	ret             nc                ; this is the carry flag from L04A3
+	push            af
+	ld              a, (VDP0Shad)     ; Check for hi-res graphics
+	bit             1, a
+	jr              z, L0530          ; Branch if not
+	ex              de, hl
+	ld              b, h
+	ld              c, l
+	ld              l, (hl)
+	ld              h, 0x00
+	push            hl
+	add             hl, hl
+	add             hl, hl
+	add             hl, hl
+	push            hl
+	inc             bc
+	ld              a, (bc)
+	ld              l, a
+	inc             bc
+	ld              a, (bc)
+	ld              h, a
+	pop             bc
+	pop             iy
+	pop             af
+	bit             7, a
+	call            nz, L0594
+	inc             d                 ; DE = DE + 0100H
+	bit             6, a
+	call            nz, L0594
+	inc             d                 ; DE = DE + 0100H
+	bit             5, a
+	ret             z
+L0594:
+	push            af
+	push            bc
+	push            iy
+	push            de
+	push            hl
+	call            _BlkWrtVRAM3      ; Pattern generator table
+	pop             hl
+	pop             de
+	pop             iy
+	pop             bc
+	pop             af
+	push            af
+	push            bc
+	push            iy
+	push            de
+	push            hl
+	bit             4, a
+	jr              nz, L05BC
+	add             hl, bc
+	call            _BlkWrtVRAM4      ; Color table
+L05B5:
+	pop             hl
+	pop             de
+	pop             iy
+	pop             bc
+	pop             af
+	ret
+
+L0530:
+	ex              de, hl
+	ld              c, (hl)
+	ld              b, 0x00
+	push            bc
+	pop             iy
+	inc             hl
+	ld              a, (hl)
+	inc             hl
+	ld              h, (hl)
+	ld              l, a
+	push            hl
+	push            bc
+	push            de
+	push            iy
+	call            _BlkWrtVRAM3      ; Pattern generator table
+	pop             bc
+	pop             hl
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	dec             hl
+	srl             h
+	rr              l
+	srl             h
+	rr              l
+	srl             h
+	rr              l
+	sra             e
+	sra             e
+	sra             e
+	or              a
+	sbc             hl, de
+	inc             hl
+	push            hl
+	pop             iy
+	pop             hl
+	add             hl, hl
+	add             hl, hl
+	add             hl, hl
+	pop             bc
+	add             hl, bc
+	call            _BlkWrtVRAM4      ; Color table
+	pop             af
+	ret
+
+L05BC:
+	add             hl, bc
+	ld              c, l
+	ld              b, h
+	push            iy
+	pop             hl
+L05C2:
+	push            hl
+	ld              a, (bc)
+	push            bc
+	ld              bc, 0x0008
+	ld              hl, (VDP_Temp)
+	add             hl, bc
+	ld              b, c
+L05CE:
+	dec             hl
+	ld              (hl), a
+	djnz            L05CE
+	push            de
+	call            L1EA5             ; LD A,04H LD IY,0001H JP _BlkWrtVRAM
+	pop             de
+	pop             bc
+	inc             de
+	inc             bc
+	pop             hl
+	dec             hl
+	ld              a, h
+	or              l
+	jr              nz, L05C2
+	jr              L05B5
+
+L0572:
+	push            bc
+	pop             iy
+	push            de
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	bit             7, d
+	jr              nz, L0591
+	ld              a, d
+	cp              0x70
+	jr              c, L0588
+	ld              a, 0x80
+	ld              (de), a
+	jr              L0591
+
+L0588:
+	ld              hl, D0587
+	ld              bc, 0x0001
+	call            _WrtVRAM
+L0591:
+	pop             de
+	inc             de
+	ret
+
+;***************************************
+;	1F67	
+;
+; Parameter block version of 1FFA
+;
+; Parm 1 (word) = ???
+; Parm 2 (byte) = ???
+;***************************************
+L06C7:
+	ld              bc, D06C1
+	ld              de, ParmArea
+	call            PCopy
+	ld              ix, (ParmArea)
+	ld              a, (ParmArea+2)
+	ld              b, a
+
+;***************************************
+;	1FFA	
+;
+; ENTRY	IX = ???
+;	A = ???
+;***************************************
+L06D8:
+	ld              a, (D73C6)
+	dec             a
+	jr              nz, L06E3
+
+L0623:
+	push            ix
+	ld              hl, (0x73CD)
+	pop             de
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+	inc             hl
+	ld              (hl), b
+	inc             hl
+	ex              de, hl
+	ld              a, (0x73CB)
+	inc             a
+	ld              hl, 0x73CA
+	cp              (hl)
+	ex              de, hl
+	jr              nz, L0669
+	xor             a
+	ld              hl, (0x73D1)
+L0669:
+	ld              (0x73CD), hl
+	ld              (0x73CB), a
+	ret
+
+L06E3:
+	ld              l, (ix+0x00)
+	ld              h, (ix+0x01)
+	ld              a, (hl)
+	ld              c, a
+	and             0x0F
+	jr              z, L06FF
+	dec             a
+	jp              z, L0A87
+	dec             a
+	jr              z, L08DF
+	dec             a
+	jp              z, L0955
+	jp              L0EA2
+
+L08DF:
+	ld              e, 0xF9
+	call            L08E0
+	ld              hl, 0x0008
+	jp              L0999
+
+L06FF:
+	ld              e, (ix+0x02)
+	ld              d, (ix+0x03)
+	push            de
+	pop             iy
+	ld              e, (iy+0x01)
+	ld              d, (iy+0x02)
+	call            A07E8
+	ld              c, e
+	ld              e, (iy+0x03)
+	ld              d, (iy+0x04)
+	call            A07E8
+	ld              b, e
+	ld              e, (iy+0x00)
+	ld              d, 0x00
+	add             hl, de
+	add             hl, de
+	ld              e, 0x05
+	add             hl, de
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ex              de, hl
+	push            bc
+	pop             de
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	ld              a, (ix+0x05)
+	bit             7, a
+	jp              nz, A080B
+	push            bc
+	push            de
+	push            hl
+	cp              0x70
+	jr              z, L0744
+	jr              c, L074B
+L0744:
+	ld              h, a
+	ld              l, (ix+0x04)
+	jr              L0780
+
+L074B:
+	ld              hl, (VDP_Temp)
+	ld              e, (ix+0x04)
+	ld              d, (ix+0x05)
+	push            hl
+	push            de
+	push            hl
+	ld              bc, 0x0004
+	call            _ReadVRAM
+	pop             hl
+	ld              a, (hl)
+	cp              0x80
+	jr              nz, L0766
+	pop             de
+	jr              L077F
+
+L0766:
+	inc             hl
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	ld              e, (hl)
+	ld              d, 0x00
+	inc             hl
+	ex              de, hl
+.byte   0xFE                          ; CP n - skips the ADD HL,HL
+L0771:
+	add             hl, hl
+	djnz            L0771
+	push            hl
+	pop             bc
+	ex              de, hl
+	pop             de
+	inc             de
+	inc             de
+	inc             de
+	inc             de
+	call            _ReadVRAM
+L077F:
+	pop             hl
+L0780:
+	ld              a, (hl)
+	cp              0x80
+	jr              z, L0794
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	push            ix
+	call            A080B
+	pop             ix
+L0794:
+	pop             hl
+	pop             de
+	pop             bc
+	push            bc
+	push            de
+	push            hl
+	ld              l, (ix+0x04)
+	ld              h, (ix+0x05)
+	ld              a, 0x70
+	cp              h
+	jr              c, L07A8
+	ld              hl, (VDP_Temp)
+L07A8:
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+	inc             hl
+	ld              (hl), c
+	inc             hl
+	ld              (hl), b
+	inc             hl
+	push            ix
+	call            L0898
+	pop             ix
+	pop             hl
+	pop             de
+	pop             bc
+	push            ix
+	call            A080B
+	pop             ix
+	ld              d, (ix+0x05)
+	ld              a, 0x70
+	cp              d
+	ret             z
+	ret             c
+	ld              e, (ix+0x04)
+	exx
+	ld              hl, (VDP_Temp)
+	push            hl
+	inc             hl
+	inc             hl
+	ld              e, (hl)
+	ld              d, 0x00
+	inc             hl
+	ld              b, (hl)
+	ex              de, hl
+.byte   0xFE                          ; CP n - skips the ADD HL,HL
+L07DD:
+	add             hl, hl
+	djnz            L07DD
+	push            hl
+	exx
+	pop             bc
+	pop             hl
+	jp              _WrtVRAM
+
+L08E0:
+	ld              iy, (VDP_Temp)
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	ld              a, b
+	or              a
+	jr              z, L0900
+	inc             a
+	jr              nz, L0A54
+	ld              a, c
+	cp              e
+	jp              m, L0A54
+L0900:
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	ld              a, b
+	or              a
+	jr              z, L0914
+	inc             a
+	jr              nz, L0A54
+	ld              a, c
+	cp              e
+	jp              m, L0A54
+L0914:
+	dec             hl
+	dec             hl
+	ld              a, (hl)
+	or              a
+	jr              z, L09CA
+	dec             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	ret
+
+L09CA:
+	pop             hl                ; get rid of return address
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	inc             hl
+	ld              a, (hl)
+	call            L09D5
+	ld              a, (hl)
+L09FD:
+	ld              (iy+0x03), a
+L0A00:
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	inc             hl
+	inc             hl
+	inc             hl
+	ld              a, (hl)
+	ld              (iy+0x00), a
+	call            L09D8
+	inc             hl
+	ld              a, (hl)
+	ld              l, (ix+0x00)
+	ld              h, (ix+0x01)
+	inc             hl
+	add             a, (hl)
+	ld              (iy+0x02), a
+	xor             a                 ; Sprite attribute table
+	ld              d, a
+	ld              e, (ix+0x04)
+	push            iy
+	jr              L0A7E
+
+L0A54:
+	pop             de                ; get rid of return address
+	push            iy
+	push            ix
+	push            iy
+	push            iy
+	xor             a                 ; Sprite attribute table
+	ld              d, a
+	ld              e, (ix+0x04)
+	pop             hl
+	call            L1E92             ; LD IY,0001H / JP _BlkReadVRAM
+	xor             a
+	pop             iy
+	ld              (iy+0x01), a
+	ld              a, 0x80
+	ld              (iy+0x03), a
+	xor             a                 ; Sprite attribute table
+	ld              d, a
+	pop             ix
+	ld              e, (ix+0x04)
+L0A7E:
+	pop             hl
+	jp              L1EA7             ; LD IY,0001H / JP _BlkWrtVRAM
+
+;***************************************
+;
+; Initialize the video chip
+;
+;***************************************
+L1319:
+	call            InitScrn
+
+;		Initialize the character cells for "COLECOVISION"
+
+	ld              hl, A18A3         ; Point to character cell usage list
+	ld              de, 0x0060        ; Starting character code = 60H
+L1330:
+	push            hl
+	ld              a, (hl)           ; Get block ID
+	rlca                              ; Multiply index by 8
+	jp              c, L1352          ; Check for end of list
+	rlca
+	rlca
+	ld              c, a              ; Load BC with block offset
+	ld              b, d              ; (D-reg = 00H here)
+	ld              hl, A14C3         ; Point to block data
+L1356:
+	add             hl, bc            ; Point HL to block image
+	push            de
+	call            _BlkWrtVRAM31     ; LD A,03H LD IY,0001H JP _BlkWrtVRAM
+	pop             de
+	pop             hl
+	inc             de
+	inc             hl
+	jr              L1330
+
+InitScrn:
+	xor             a                 ; Fill VRAM from address 0000H
+	ld              h, a              ;   with 00H
+	ld              l, a              ;
+	ld              de, 0x4000        ;   length 4000H
+	call            _FillVRAM         ; Do the fill
+	call            _InitVDP          ; Initialize the video chip
+	jp              _InitFont         ; Initialize the text font
+
+.byte               O,O,O,O,O,O,O,O,O,O
+
+A07E8:
+	push            hl
+	sra             d
+	rr              e
+	sra             d
+	rr              e
+	sra             d
+	rr              e
+	bit             7, d
+	ld              hl, 0xFF80
+	jr              nz, L0802
+	add             hl, de
+	pop             hl
+	ret             nc
+	ld              e, 0x7F
+	ret
+
+L0802:
+	ld              h, 0x00           ; LD HL,0080H
+	add             hl, de
+	pop             hl
+	ret             c
+	ld              e, 0x80
+	ret
+
+.byte               O
+
+A080B:
+	push            bc                ; (called by Antarctic Adventure and Destructor)
+	push            de
+	push            hl
+	exx
+	pop             hl
+	pop             de
+	pop             bc
+	call            A08C0
+	exx
+	ld              a, e
+	bit             7, a
+	jr              nz, L081E
+	cp              0x20
+	ret             nc
+L081E:
+	add             a, c
+	bit             7, a
+	ret             nz
+	or              a
+	ret             z
+	bit             7, e
+	jr              z, L0848
+	ld              a, c
+	add             a, e
+	push            de
+	cp              0x21
+	jr              c, L0831
+	ld              a, 0x20
+L0831:
+	ld              e, a
+	ld              d, 0x00
+	push            de
+	pop             iy
+	pop             de
+	ld              a, e
+	exx
+	push            bc
+	neg
+	ld              c, a
+	ld              b, 0x00
+	add             hl, bc
+	ex              de, hl
+	add             hl, bc
+	ex              de, hl
+	pop             bc
+	exx
+	jr              L0864
+
+L0848:
+	ld              a, e
+	add             a, c
+	cp              0x1F
+	jr              z, L085D
+	jr              c, L085D
+	ld              a, 0x20
+	sub             e
+	push            de
+	ld              e, a
+	ld              d, 0x00
+	push            de
+	pop             iy
+	pop             de
+	jr              L0864
+
+L085D:
+	push            bc
+	ld              b, 0x00
+	push            bc
+	pop             iy
+	pop             bc
+L0864:
+	ld              e, 0x00
+L0866:
+	ld              a, d
+	add             a, e
+	bit             7, a
+	jr              nz, L0885
+	cp              0x18
+	jr              nc, L0885
+	push            bc
+	push            de
+	exx
+	push            bc
+	push            de
+	push            hl
+	push            iy
+	call            _BlkWrtVRAM2
+	pop             iy
+	pop             hl
+	pop             de
+	pop             bc
+	exx
+	pop             de
+	pop             bc
+L0885:
+	exx
+	push            bc
+	ld              b, 0x00
+	add             hl, bc
+	ex              de, hl
+	ld              c, 0x20
+	add             hl, bc
+	ex              de, hl
+	pop             bc
+	exx
+	inc             e
+	ld              a, e
+	cp              b
+	jr              nz, L0866
+	ret
+
+L0898:
+	call            A08C0
+	push            bc
+	ld              b, 0x00
+	push            bc
+	pop             iy
+	pop             bc
+L08A2:
+	push            bc
+	push            de
+	push            hl
+	push            iy
+	ld              a, 0x02           ; Name table
+	call            _BlkReadVRAM
+	pop             iy
+	pop             hl
+	pop             de
+	pop             bc
+	push            bc
+	ld              b, 0x00
+	add             hl, bc
+	ld              c, 0x20
+	ex              de, hl
+	add             hl, bc
+	ex              de, hl
+	pop             bc
+	dec             b
+	jr              nz, L08A2
+	ret
+
+.byte               O,O,O,O
+
+A08C0:
+	push            hl
+	ld              h, 0x00           ; sign-extend D -> HL
+	bit             7, d
+	jr              z, L08CB
+	dec             h
+L08CB:
+	ld              l, d
+	add             hl, hl            ; HL = D * 32 (signed multiply)
+	add             hl, hl
+	add             hl, hl
+	add             hl, hl
+	add             hl, hl
+	ld              d, 0x00           ; sign-extend E -> DE
+	bit             7, e
+	jr              z, L08DB
+	dec             d
+L08DB:
+	jp              L047C             ; DE = (D * 32) + E (signed arithmetic)
+
+L0955:
+	ld              e, 0xE1
+	call            L08E0
+	ld              hl, 0x0020
+L0999:
+	add             hl, bc
+	ld              a, l
+	call            L09D5
+	ld              a, (hl)
+	or              0x80
+	jp              L09FD
+
+L0A87:
+	ld              iy, (VDP_Temp)
+	ld              a, (VDP0Shad)     ; Check for hi-res graphics
+	bit             1, a
+	set             7, b
+	jr              nz, L0A98         ; Branch if so
+	res             7, b
+L0A98:
+	ld              (iy+0x03), b
+	push            hl
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	ld              a, (hl)
+	ld              (iy+0x04), a
+	xor             0x80
+	ld              (hl), a
+	inc             hl
+	ld              e, (hl)
+	ld              a, e
+	and             0x07
+	neg
+	add             a, 0x08
+	ld              (iy+0x01), a
+	inc             hl
+	ld              d, (hl)
+	call            A07E8
+	ld              (iy+0x11), e
+	inc             hl
+	ld              e, (hl)
+	ld              a, e
+	and             0x07
+	ld              (iy+0x00), a
+	inc             hl
+	ld              d, (hl)
+	call            A07E8
+	ld              (iy+0x12), e
+	ld              hl, (VDP_Temp)
+	ld              de, 0x0013
+	add             hl, de
+	ld              e, (iy+0x11)
+	ld              d, (iy+0x12)
+	ld              bc, 0x0303
+	call            L0898
+	ld              e, (ix+0x04)
+	ld              d, (ix+0x05)
+	ld              a, (ix+0x06)
+	pop             ix
+	ld              iy, (VDP_Temp)
+	ld              (iy+0x05), a
+	push            de
+	ld              hl, (VDP_Temp)
+	ld              bc, 0x0006
+	add             hl, bc
+	ld              c, 0x0B
+	ld              a, d
+	cp              0x70
+	jr              nc, L0B07
+	call            _ReadVRAM
+	jr              L0B0A
+
+L0B07:
+	ex              de, hl
+	ldir
+L0B0A:
+	ld              hl, (VDP_Temp)
+	push            hl
+	ld              de, 0x0013
+	add             hl, de
+	exx
+	pop             de
+	ld              hl, 0x0008
+	add             hl, de
+	ex              de, hl
+	exx
+	ld              iy, (VDP_Temp)
+	ld              c, (iy+0x05)
+	ld              b, 0x09
+L0B25:
+	ld              a, (hl)
+	sub             c
+	cp              0x12
+	jr              nc, L0B39
+	cp              0x09
+	jr              c, L0B31
+	sub             0x09
+L0B31:
+	exx
+	ld              l, a
+	ld              h, 0x00
+	add             hl, de
+	ld              a, (hl)
+	exx
+	ld              (hl), a
+L0B39:
+	inc             hl
+	djnz            L0B25
+	pop             de
+	ld              hl, (VDP_Temp)
+	push            hl
+	ld              bc, 0x0011
+	add             hl, bc
+	ld              c, 0x0B
+	ld              a, d
+	cp              0x70
+	jr              nc, L0B51
+	call            _WrtVRAM
+.byte               0x11              ; LD DE,n - skips LDIR instruction
+L0B51:
+	ldir
+	pop             de
+	push            ix
+	ld              hl, 0x0013
+	add             hl, de
+	ex              de, hl
+	ld              bc, 0x0014
+	add             hl, bc
+	ld              b, 0x09
+L0B64:
+	ld              a, (de)
+	inc             de
+	push            de
+	ld              de, 0x0008
+	add             hl, de
+	push            hl
+	ld              e, a
+;		LD	D,00H
+	ld              c, a
+	push            bc
+	ld              a, 0x09
+	sub             b
+	ld              b, d
+L0B76:
+	sub             0x03
+	jr              c, L0B7D
+	inc             b
+	jr              L0B76
+
+L0B7D:
+	ld              a, b
+	ld              iy, (VDP_Temp)
+	add             a, (iy+0x12)
+	bit             7, (iy+0x03)
+	jr              nz, L0BB8
+	ld              a, 0x03           ; Pattern generator table
+	call            L1E92             ; LD IY,0001H / JP _BlkReadVRAM
+	pop             bc
+	ld              hl, (VDP_Temp)
+	push            bc
+	ld              de, 0x0084
+	add             hl, de
+	ld              e, c
+	srl             e
+	srl             e
+	srl             e
+;		LD	D,00H
+	ld              a, 0x09
+	sub             b
+	ld              c, a
+	ld              b, d
+	add             hl, bc
+	jr              L0BD6
+
+L0BB8:
+	sra             a
+	sra             a
+	sra             a
+	cp              0x03
+	jr              nc, L0BD9
+	ld              d, a
+	push            de
+	push            hl
+	ld              a, 0x03           ; Pattern generator table
+	call            L1E92             ; LD IY,0001H / JP _BlkReadVRAM
+	pop             hl
+	ld              de, 0x0068
+	add             hl, de
+	pop             de
+L0BD6:
+	call            L1E90             ; LD A,04H LD IY,0001H JP _BlkReadVRAM
+L0BD9:
+	pop             bc
+	pop             hl
+	pop             de
+	djnz            L0B64
+	pop             ix
+	exx
+	ld              e, (ix+0x02)
+	ld              d, (ix+0x03)
+	ld              c, (ix+0x04)
+	ld              b, (ix+0x05)
+	exx
+	push            ix
+	pop             hl
+	ld              iy, (VDP_Temp)
+	ld              a, (iy+0x04)
+	add             a, a
+	ld              c, a
+	ld              de, 0x0006
+	ld              b, d
+	add             hl, de
+	add             hl, bc
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ld              hl, (VDP_Temp)
+	ld              bc, 0x007C
+	add             hl, bc
+	push            hl
+	push            bc
+	ld              c, 0x05
+	ld              a, d
+	cp              0x70
+	jr              nc, L0C1A
+	call            _ReadVRAM
+	jr              L0C1D
+
+L0C1A:
+	ex              de, hl
+	ldir
+L0C1D:
+	ld              iy, (VDP_Temp)
+	pop             bc
+	add             iy, bc
+	ld              a, (iy+0x04)
+	ld              iy, (VDP_Temp)
+	ld              (iy+0x02), a
+	pop             de
+	ld              hl, (VDP_Temp)
+	ld              bc, 0x0064
+	add             hl, bc
+	ld              b, 0x04
+L0C38:
+	ld              a, (de)
+	cp              (ix+0x01)
+	push            de
+	exx
+	ld              h, 0x00
+	jr              nc, L0C55
+	add             a, a
+	add             a, a
+	add             a, a
+	ld              l, a
+	add             hl, bc
+	push            hl
+	exx
+	pop             de
+L0C7C:
+	ex              de, hl
+	push            bc
+	ld              bc, 0x0008
+	ldir
+	ex              de, hl
+	jr              L0C84
+
+L0C55:
+	sub             (ix+0x01)
+	add             a, a
+	add             a, a
+	add             a, a
+	ld              l, a
+	add             hl, de
+	push            hl
+	exx
+	pop             de
+	ld              a, d
+	cp              0x70
+	jr              nc, L0C7C
+	push            bc
+	push            hl
+	push            de
+	ld              bc, 0x0008
+	push            bc
+	call            _ReadVRAM
+	pop             bc
+	pop             hl
+	add             hl, bc
+	ex              de, hl
+	pop             hl
+	add             hl, bc
+L0C84:
+	pop             bc
+	pop             de
+	inc             de
+	djnz            L0C38
+	ld              iy, (VDP_Temp)
+	ld              de, (VDP_Temp)
+	ld              hl, 0x001C
+	add             hl, de
+	ld              c, (iy+0x00)
+	ld              b, 0x00
+	add             hl, bc
+	push            hl
+	pop             ix
+	ld              hl, 0x0064
+	add             hl, de
+	push            hl
+	ld              a, 0x10
+L0CA5:
+	ex              af, af'
+	pop             hl
+	ld              d, (hl)
+	inc             hl
+	push            hl
+	ld              bc, 0x000F
+	add             hl, bc
+	ld              e, (hl)
+	ex              de, hl
+	ld              b, (iy+0x01)
+	xor             a
+L0CB4:
+	dec             b                 ; cheap HL=HL<<B?
+	jp              m, L0CBC
+	add             hl, hl
+	rla
+	jr              L0CB4
+
+L0CBC:
+	ld              e, a
+	call            L0E2F
+	ld              a, (iy+0x00)
+	inc             a
+	ld              (iy+0x00), a
+	cp              0x08
+	jr              z, L0CCF
+	cp              0x10
+	jr              nz, L0CD4
+L0CCF:
+	ld              bc, 0x0010
+	add             ix, bc
+L0CD4:
+	inc             ix
+	ex              af, af'
+	dec             a
+	jr              nz, L0CA5
+L0CDD:
+	pop             hl
+	bit             7, (iy+0x03)
+	jr              nz, L0D03
+	ld              hl, (VDP_Temp)
+	ld              bc, 0x0084
+	add             hl, bc
+	ld              d, (iy+0x02)
+	bit             1, (iy+0x03)
+	ld              bc, 0x0900
+	jr              nz, L0CFC
+	ld              c, 0x0F
+L0CFC:
+	ld              a, (hl)
+	and             c
+	or              d
+	ld              (hl), a
+	inc             hl
+	djnz            L0CFC
+L0D03:
+	ld              a, (iy+0x05)
+	bit             7, (iy+0x04)
+	jr              z, L0D0E
+	add             a, 0x09
+L0D0E:
+	ld              c, a
+	ld              hl, (VDP_Temp)
+	ld              de, 0x0013
+	add             hl, de
+	ld              b, 0x09
+L0D18:
+	ld              (hl), a
+	inc             a
+	inc             hl
+	djnz            L0D18
+	bit             7, (iy+0x03)
+	jr              nz, L0D96
+	ld              e, c
+	ld              hl, (VDP_Temp)
+	push            hl
+	ld              bc, 0x001C
+	ld              d, b
+	add             hl, bc
+	ld              iy, 0x0009
+	call            _BlkWrtVRAM3      ; Pattern generator table
+	ld              iy, (VDP_Temp)
+	pop             hl
+	ld              bc, 0x0084
+	add             hl, bc
+	ld              ix, (VDP_Temp)
+	ld              c, 0x13
+	add             ix, bc
+	ld              b, 0x09
+L0D4C:
+	ld              a, (ix+0x00)
+	inc             ix
+	srl             a
+	srl             a
+	srl             a
+	ld              e, a
+	ld              d, 0x00
+	push            bc
+	ld              a, 0x09
+	sub             b
+	ld              b, d
+L0D60:
+	cp              0x03
+	jr              c, L0D69
+	sub             0x03
+	inc             b
+	jr              L0D60
+
+L0D69:
+	add             a, (iy+0x11)
+	cp              0x20
+	jr              nc, L0D87
+	ld              a, b
+	add             a, (iy+0x12)
+	cp              0x18
+	jr              nc, L0D87
+	push            ix
+	push            hl
+	call            L1EA5             ; LD A,04H LD IY,0001H JP _BlkWrtVRAM
+	pop             hl
+	pop             ix
+L0D87:
+	pop             bc
+	inc             hl
+	inc             de
+	dec             b
+	ld              a, b
+	or              a
+	jr              nz, L0D4C
+	jr              L0DEA
+
+L0D96: ;	LD	B,00H                 ; B=00 already from L0D18 loop
+L0D98:
+	push            bc
+	ld              a, c              ; C=C+B*3
+	add             a, b
+	add             a, b
+	add             a, b
+	ld              c, a
+	ld              de, 0x0018        ; cheap multiply by 18H?
+	ld              h, d              ; HL=B*18H? (could be optimized?)
+	ld              l, d
+	ld              a, b
+L0DA5:
+	dec             a
+	jp              m, L0DAC
+	add             hl, de
+	jr              L0DA5
+
+L0DAC:
+	ld              iy, (VDP_Temp)
+	ld              a, (iy+0x12)
+	add             a, b
+	cp              0x18
+	jr              nc, L0DE3
+	srl             a
+	srl             a
+	srl             a
+	ld              d, a
+	ld              e, c
+	push            de
+	ld              bc, 0x001C
+	add             hl, bc
+	ld              bc, (VDP_Temp)
+	add             hl, bc
+	push            hl
+	ld              iy, 0x0003
+	call            _BlkWrtVRAM3      ; Pattern generator table
+	pop             hl
+	ld              de, 0x0068
+	add             hl, de
+	pop             de
+	ld              iy, 0x0003
+	call            _BlkWrtVRAM4
+L0DE3:
+	pop             bc
+	inc             b
+	ld              a, b
+	cp              0x03
+	jr              nz, L0D98
+L0DEA:
+	ld              iy, (VDP_Temp)
+	ld              b, (iy+0x06)
+	ld              a, b
+	cp              0x80
+	jr              z, L0E17
+	ld              c, (iy+0x07)
+	ld              h, (iy+0x11)
+	ld              l, (iy+0x12)
+	or              a
+	sbc             hl, bc
+	jr              z, L0E17
+	ld              hl, (VDP_Temp)
+	ld              de, 0x0008
+	add             hl, de
+	ld              e, (iy+0x06)
+	ld              d, (iy+0x07)
+	call            L0E28
+L0E17:
+	ld              iy, (VDP_Temp)
+	ld              hl, (VDP_Temp)
+	ld              de, 0x0013
+	add             hl, de
+	ld              e, (iy+0x11)
+	ld              d, (iy+0x12)
+L0E28:
+	ld              bc, 0x0303
+	jp              A080B
+
+L0E2F:
+	bit             0, (iy+0x03)
+	jr              nz, L0E4B
+	or              (ix+0x00)
+	ld              (ix+0x00), a
+	ld              a, h
+	or              (ix+0x08)
+	ld              (ix+0x08), a
+	ld              a, l
+	or              (ix+0x10)
+	jr              L0E5C
+
+L0E4B:
+	or              a
+	jr              z, L0E51
+	ld              (ix+0x00), a
+L0E51:
+	ld              a, h
+	or              a
+	jr              z, L0E58
+	ld              (ix+0x08), a
+L0E58:
+	ld              a, l
+	or              a
+	jr              z, L0E5F
+L0E5C:
+	ld              (ix+0x10), a
+L0E5F:
+	bit             7, (iy+0x03)
+	ret             z
+	push            ix
+	ld              bc, 0x0068
+	add             ix, bc
+	ld              c, b
+	ld              b, (iy+0x02)
+	bit             1, (iy+0x03)
+	jr              nz, L0E7B
+	ld              c, 0x0F
+L0E7B:
+	ld              a, e
+	or              a
+	jr              z, L0E87
+	ld              a, (ix+0x00)
+	and             c
+	or              b
+	ld              (ix+0x00), a
+L0E87:
+	ld              a, h
+	or              a
+	jr              z, L0E93
+	ld              a, (ix+0x08)
+	and             c
+	or              b
+	ld              (ix+0x08), a
+L0E93:
+	ld              a, l
+	or              a
+	jr              z, L0E9F
+	ld              a, (ix+0x10)
+	and             c
+	or              b
+	ld              (ix+0x10), a
+L0E9F:
+	pop             ix
+	ret
+
+L0EA2:
+	push            bc
+	exx
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	ld              a, (hl)
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	exx
+	add             a, a
+	add             a, a
+	ld              e, a
+	ld              d, 0x00
+	add             hl, de
+	inc             hl
+	ld              c, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ld              h, b
+	ld              l, c
+	pop             bc
+	ld              a, c
+	ld              c, b
+	srl             a
+	srl             a
+	srl             a
+	srl             a
+	ld              b, a
+	push            bc
+	push            ix
+L0ED3:
+	push            hl
+	push            de
+	ld              l, (ix+0x04)
+	ld              h, (ix+0x05)
+	inc             ix
+	inc             ix
+	inc             hl
+	inc             hl
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	push            de
+	pop             iy
+	pop             de
+	pop             hl
+	ld              a, (hl)
+	bit             7, (iy+0x00)
+	jr              z, L0EF2
+	set             7, a
+L0EF2:
+	ld              (iy+0x00), a
+	inc             hl
+	ld              a, (de)
+	exx
+	ld              l, a
+	ld              h, 0x00
+	add             hl, bc
+	ld              (iy+0x01), l
+	ld              (iy+0x02), h
+	exx
+	inc             de
+	ld              a, (de)
+	exx
+	ld              l, a
+	ld              h, 0x00
+	add             hl, de
+	ld              (iy+0x03), l
+	ld              (iy+0x04), h
+	exx
+	inc             de
+	djnz            L0ED3
+	pop             iy
+	ld              bc, 0x0004
+	add             iy, bc
+	pop             de
+L0F1C:
+	ld              l, (iy+0x00)
+	ld              h, (iy+0x01)
+	inc             iy
+	inc             iy
+	push            hl
+	pop             ix
+	push            iy
+	push            de
+	ld              b, e
+	call            L06D8
+	pop             de
+	pop             iy
+	dec             d
+	jr              nz, L0F1C
+	ret
+
+;	Send freqency to sound chip
+
+L0175:
+	ld              a, (ix+0x03)
+	and             0x0F
+	or              d
+	call            WRITE_SOUND
+	ld              a, (ix+0x03)
+	and             0xF0
+	ld              d, a
+	ld              a, (ix+0x04)
+	and             0x0F
+	or              d
+	rrca
+	rrca
+	rrca
+	rrca
+	jp              L0335
+
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O
+
+;***************************************
+;
+; CONTROLLER HANDLING ROUTINES BEGIN HERE
+;
+;***************************************
+
+;***************************************
+;	1F79	ReadCtl
+;
+; Read a joystick or keypad controller and a fire button
+;
+; ENTRY	H = 0 for left control, 1 for right
+; 	L = 0 for joystick/left fire, 1 for keypad/right fire
+; EXIT:	H = fire button in 40H bit
+;	L = joystick directionals or key code
+;	E = old pulse counter (only if L=0)
+;***************************************
+_ReadCtl:
+	ld              a, l              ; Check if reading keypad
+	cp              0x01
+	jr              z, L11AA          ; Branch if reading keypad
+	ld              bc, PulseCnt1     ; Point BC to pulse counter
+	ld              a, h
+	or              a
+	jr              z, L1199          ; branch if left controller
+	inc             bc                ; Point BC to PulseCnt2
+L1199:
+	ld              a, (bc)           ; E = old pulse counter value
+	ld              e, a
+	xor             a                 ; Clear pulse counter
+	ld              (bc), a
+	call            L113D             ; Read joystick port
+	ld              d, a              ; Save port bits in D
+	and             0x0F
+	ld              l, a              ; L = directional bits
+	jr              L11BC
+
+;	Read the keypad
+
+L11AA:
+	call            KP_SELECT         ; Select keypad mode
+	call            L113D             ; Read joystick port
+	ld              d, a              ; Save port bits in D
+	call            JOY_SELECT        ; Select joystick mode
+	and             0x0F              ; Mask off keypad bits
+	ld              hl, Keypad_Table  ; Index into keypad table
+	ld              b, 0x00
+	ld              c, a
+	add             hl, bc
+	ld              l, (hl)           ; L = key code (or 0FH if none)
+L11BC:
+	ld              a, d
+	and             0x40
+	ld              h, a              ; H = right fire button bit
+	ret
+
+__ReadCtlRaw:
+	call            READ_JOY1         ; Update joystick 1 shadow
+	cpl
+	ld              (Joy1Shad), a
+	call            READ_JOY2         ; Update joystick 2 shadow
+	cpl
+	call            KP_SELECT         ; Select keypad mode
+	ld              (Joy2Shad), a     ; 13 T-states (wait for mode change)
+	push            af                ; 11 T-states
+	pop             af                ; 11 T-states, total 35 (original 31)
+	call            READ_JOY1         ; Update keyboard 1 shadow
+	cpl
+	ld              (Key1Shad), a
+	call            READ_JOY2         ; Update keyboard 2 shadow
+	cpl
+	call            JOY_SELECT        ; Select joystick mode
+L1137:
+	ld              (Key2Shad), a
+	ret
+
+;***************************************
+;	1F88	ReadSpinner
+;
+; This was included to support the "spinner" control that
+; was originally planned to be in the regular controllers.
+; It was later included in the Super Action controllers.
+; Early versions of the controller circuit board even have
+; circuit traces and holes for the spinner parts.
+;
+; Apparently the 20H bit is a direction bit, and the 10H
+; bit is a "pulse" bit.
+;***************************************
+_ReadSpinner:
+	ld              hl, PulseCnt1     ; Point to first pulse counter
+	call            READ_JOY1         ; Read joystick 1
+	call            L117D             ; Do first pulse counter
+	inc             hl                ; Point to second pulse counter
+	call            READ_JOY2         ; Read joystick 2
+
+L117D:
+	bit             4, a              ; Test 10H bit
+	ret             nz                ; Return if set (no pulse)
+L1182:
+	bit             5, a              ; Test 20H bit
+	jr              nz, L1189         ; Inc counter if set
+	dec             (hl)              ; Dec counter if clear
+	ret
+
+D1AC1:                                ; DB '4'
+L1189:
+	inc             (hl)
+	ret
+
+;***************************************
+;
+; This routine initializes the controller state tables,
+; counters, and shadow bytes.
+;
+;***************************************
+A1105:
+InitCtlState:
+	call            JOY_SELECT        ; Select joysticks
+	xor             a                 ; Prepare to clear some memory
+	ld              ix, (CtlState)    ; Clearing (8008H)+2 to (8008H)+11
+	inc             ix
+	inc             ix
+	ld              iy, RawCtlState   ; Clearing 73D7H to 73EAH
+	ld              b, 0x0A           ; Clearing 10 words/bytes
+L1116:
+	ld              (ix+0x00), a      ; Clear byte at (IX)
+	inc             ix
+	ld              (iy+0x00), a      ; Clear word at (IY)
+	inc             iy
+	ld              (iy+0x00), a
+	inc             iy
+	dec             b                 ; Loop ten times
+	jr              nz, L1116
+	ld              (PulseCnt1), a    ; Clear out controller counters
+	ld              (PulseCnt2), a    ;   and shadows
+	ld              (Joy1Shad), a
+	ld              (Joy2Shad), a
+	ld              (Key1Shad), a
+	jr              L1137
+
+; keypad translation table
+
+Keypad_Table:
+	.byte           0x0F,0x06,0x01,0x03
+	.byte           0x09,0x00,0x0A,0x0F
+	.byte           0x02,0x0B,0x07,0x0F
+	.byte           0x05,0x04,0x08,0x0F
+
+;***************************************
+;	1F76	ReadCtlRaw
+;
+; Update the joystick and keypad shadow bytes.
+;***************************************
+A114A:
+_ReadCtlRaw:
+	jp              __ReadCtlRaw
+ 
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O
+
+;***************************************
+; Read value of joystick port.
+;
+; ENTRY	H = 0 for left, 1 for right
+;
+; EXIT:	A = input data
+;***************************************
+L113D:
+	ld              a, h              ; (these 3 instrs give enough delay)
+	or              a
+	jr              nz, L1146
+	call            READ_JOY1
+	jr              L1148
+
+L1146:
+	call            READ_JOY2
+L1148:
+	cpl
+	ret
+
+;***************************************
+;	1FEB	ReadCtlState
+;
+; This routine reads the raw controller state, then updates the
+; table pointed to by (8008H).  The format of this table is:
+;
+; Byte 0 = left controller enable flag
+; Byte 1 = right controller enable flag
+;	Bit 0 = left fire button enable flag
+;	Bit 1 = directionals enable flag
+;	Bit 2 = spinner enable flag
+;	Bit 3 = right fire button enable flag
+;	Bit 4 = keypad enable flag
+;	Bit 5 = unused
+;	Bit 6 = unused
+;	Bit 7 = controller enable flag
+; Bytes 2-6  = left controller result state
+; Bytes 7-11 = right controller result state
+;	+0 = left fire button state (00H or 40H)
+;	+1 = directionals state (00H-0FH)
+;	+2 = spinner count (00H-FFH)
+;	+3 = right fire button state (00H or 40H)
+;	+4 = keypad state (00H-0EH, or 0FH for none)
+;
+; State changes are delayed by one call to ReadCtlState, which
+; will provide debouncing if this is called once per vertical
+; retrace.  Debouncing is done with a raw state table at 73D7H:
+;
+; 73D7-73E0 = left controller raw state
+; 73E1-73EA = right controller raw state
+;	+0 = raw left fire button state
+;	+2 = raw directionals state
+;	+4 = unused?  (73DB, 73DC, 73E5, 73E6)
+;	+6 = raw right fire button state
+;	+8 = raw keypad state
+;		+0 = raw controller bits
+;		+1 = state flag (1 = same in prev call, 0 = different)
+;
+; The HL register is preserved by this subroutine.  (Burgertime depends on
+; this for its screen saver timeout at the skill screen.)
+;***************************************
+_ReadCtlState:
+	call            _ReadCtlRaw       ; Read controller state
+	ld              iy, RawCtlState   ; IY = left controller raw state
+	ld              ix, (CtlState)    ; IX = left controller state
+	push            ix                ; Save IX
+	ld              a, (ix+0x00)      ; Check left controller flag
+	bit             7, a              ; Skip if disabled
+	jr              z, L11F3
+	ld              b, a              ; Save flag in B
+	inc             ix                ; IX = left controller area
+	inc             ix
+	and             0x07              ; Check joystick enable flags
+	jr              z, L11E8          ; Skip if disabled
+	ld              a, (Joy1Shad)     ; Get left controller state
+	ld              hl, PulseCnt1     ; Point to left spinner counter
+	call            JBits             ; Process joystick bits
+L11E8:
+	ld              a, b              ; Check keypad enable flags
+	and             0x18
+	jr              z, L11F3          ; Skip if disabled
+	ld              a, (Key1Shad)     ; Get left keypad state
+	call            KBits             ; Process keypad bits
+L11F3:
+	pop             ix                ; Recover IX
+	ld              a, (ix+0x01)      ; Check right controller flag
+	bit             7, a
+	ret             z                 ; Return if disabled
+	ld              b, a              ; Save flag in B
+	ld              de, 0x000A        ; IY = right controller raw state
+	add             iy, de
+	ld              e, 0x07           ; IX = right controller state
+	add             ix, de
+	and             0x07              ; Check joystick enable flags
+	jr              z, L1214          ; Skip if disabled
+	ld              a, (Joy2Shad)     ; Get right controller state
+	ld              hl, PulseCnt2     ; Point to right spinner counter
+	call            JBits             ; Process joystick bits
+L1214:
+	ld              a, b              ; Check keypad enable flags
+	and             0x18
+	ret             z                 ; Return if disabled
+	ld              a, (Key2Shad)     ; Get left keypad state
+
+;	Process keypad bits
+; A = keypad state
+; B = enable flags
+; IX points to small table
+; IY points to large table
+
+KBits:
+	ld              c, a              ; C = keypad state
+	bit             3, b              ; Test right fire button bit
+	jr              z, L1248
+
+;	Process right fire button state
+
+KFire:
+	push            bc
+	and             0x40              ; Mask out fire button bit
+	ld              c, a              ; C = fire button bit
+	ld              b, (iy+0x06)      ; B = previous bit
+	ld              a, (iy+0x07)      ; A = current state
+	or              a
+	ld              a, c
+	jr              nz, L130B
+	cp              b                 ; State 0 handling
+	jr              nz, L130F         ; Has the bit changed (bounce)?
+
+	ld              a, 0x01           ; Next state = 1
+	ld              (ix+0x03), c      ; Store new fire button state
+	jr              L1313
+
+L130B:
+	cp              b                 ; State 1 handling
+	jr              z, L1316          ; Has the bit changed?
+L130F:
+	ld              (iy+0x06), c      ; Yes, update it
+	xor             a                 ; Next state = 0
+L1313:
+	ld              (iy+0x07), a
+L1316:
+	pop             bc
+
+	ld              a, c
+L1248:
+	bit             4, b              ; Test keypad bit
+	ret             z                 ; Don't do keypad if clear
+
+;	Process keypad state
+
+KKeypad:
+	push            bc
+	and             0x0F              ; Mask out keypad bits
+	ld              c, a              ; C = keypad bits
+	ld              b, (iy+0x08)      ; B = previous bits
+	ld              a, (iy+0x09)      ; A = current state
+	or              a
+	ld              a, c
+	jr              nz, L127A
+	cp              b                 ; State 0 handling
+	jr              nz, L127E         ; Have the bits changed (bounce)?
+
+	push            hl
+	ld              hl, Keypad_Table  ; Get key code
+	ld              b, 0x00
+	add             hl, bc
+	ld              a, (hl)
+	pop             hl
+	ld              (ix+0x04), a      ; Store new key code
+	ld              a, 0x01           ; Next state = 1
+	jr              L1282
+
+L127A:
+	cp              b                 ; State 1 handling
+	jr              z, L1285          ; Have the bits changed?
+L127E:
+	ld              (iy+0x08), c      ; Yes, update them
+	xor             a                 ; Next state = 0
+L1282:
+	ld              (iy+0x09), a
+L1285:
+	pop             bc
+	ret
+
+;	Process joystick bits and spinner counter
+; A = joystick state
+; B = enable flags
+; HL points to spinner counter
+; IX points to small table
+; IY points to large table
+
+JBits:
+	ld              c, a              ; C = keypad state
+	bit             1, b              ; Test directionals bit
+	jr              z, L1229
+
+;	Process directionals state
+
+JJoystick:
+	push            bc
+	and             0x0F              ; Mask out directional bits
+	ld              c, a              ; C = directional bits
+	ld              b, (iy+0x02)      ; B = previous bits
+	ld              a, (iy+0x03)      ; A = current state
+	or              a
+	ld              a, c
+	jr              nz, L12DB
+	cp              b                 ; State 0 handling
+	jr              nz, L12DF         ; Have the bits changed (bounce)?
+
+	ld              a, 0x01           ; Next state = 1
+	ld              (ix+0x01), c      ; Store new directionals state
+	jr              L12E3
+
+L12DB:
+	cp              b                 ; State 1 handling
+	jr              z, L12E6          ; Have the bits changed?
+L12DF:
+	ld              (iy+0x02), c      ; Yes, update them
+	xor             a                 ; Next state = 0
+L12E3:
+	ld              (iy+0x03), a
+L12E6:
+	pop             bc
+
+	ld              a, c
+L1229:
+	bit             0, b              ; Test left fire button bit
+	jr              z, L1231
+
+;	Process left fire button state
+
+JFire:
+	push            bc
+	and             0x40              ; Mask out fire button bit
+	ld              c, a              ; C = fire button bit
+	ld              b, (iy+0x00)      ; B = previous bit
+	ld              a, (iy+0x01)      ; A = current state
+	or              a
+	ld              a, c
+	jr              nz, L12AB
+	cp              b                 ; State 0 handling
+	jr              nz, L12AF         ; Has the bit changed (bounce)?
+
+	ld              a, 0x01           ; Next state = 1
+	ld              (ix+0x00), c      ; Store new fire button state
+	jr              L12B3
+
+L12AB:
+	cp              b                 ; State 1 handling
+	jr              z, L12B6          ; Has the bit changed?
+L12AF:
+	ld              (iy+0x00), c      ; Yes, update it
+	xor             a                 ; Next state = 0
+L12B3:
+	ld              (iy+0x01), a
+L12B6:
+	pop             bc
+
+	ld              a, c
+L1231:
+	bit             2, b              ; Test spinner bit
+	ret             z                 ; Exit if not set
+	ld              a, (hl)           ; Get spinner accumulator
+	add             a, (ix+0x02)      ; Add to (IX + 2)
+	ld              (ix+0x02), a
+	xor             a                 ; Clear spinner accumulator
+	ld              (hl), a
+	ret
+
+
+;***************************************
+;
+; EVENT TIMER HANDLING ROUTINES BEGIN HERE?
+;
+;***************************************
+
+;***************************************
+;	1FD3	RunTimers
+;
+; This routine updates all the event timers.
+;***************************************
+_RunTimers:
+	ld              hl, (TimerList)   ; Get timer list pointer
+L0F3A:
+	bit             5, (hl)           ; If the entry is active,
+	call            z, L0F49          ;   do something with it
+	bit             4, (hl)           ; If end of list,
+	ret             nz                ;   return
+	inc             hl                ; Point to next entry
+	inc             hl
+	inc             hl
+	jr              L0F3A             ;   and loop until end of list
+
+;	Update the timer -- first check for word or byte timer
+
+L0F49:
+	push            hl                ; Save event timer pointer
+	bit             3, (hl)           ; Check "word" flag
+	jr              z, L0F79          ; Branch if byte timer
+	bit             6, (hl)           ; Check "free-running" flag
+	jr              nz, L0F5F         ; Branch if free-running
+
+;	Do one-shot word timer
+
+	inc             hl                ; Get timer value
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	dec             de                ; Decrement timer
+	ld              a, e              ; Update it if not =1
+	or              d
+	jr              nz, L0F8F
+	dec             hl                ; Point back to flag byte
+	dec             hl
+	jr              L0F8B             ; Set timer expired flag
+
+;	Do free-running word timer
+
+L0F5F:
+	inc             hl                ; Get timer data word
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	ex              de, hl            ; Data word points to real timer
+	ld              e, (hl)           ; Get current value
+	inc             hl
+	ld              d, (hl)
+	dec             de                ; Decrement timer
+	ld              a, e
+	or              d
+	jr              nz, L0F8F         ; Update it if not =1
+	inc             hl                ; Get restart value
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	dec             hl                ; Restart the timer
+	dec             hl
+	ld              (hl), d
+	dec             hl
+	ld              (hl), e
+	pop             hl                ; Get back timer address
+	push            hl
+	jr              L0F8B             ; Set timer expired flag
+
+;	Do byte timer
+
+L0F79:
+	inc             hl                ; Point to second byte of timer
+D1AC2:                                ; DB '5'
+	dec             (hl)              ; Decrement timer
+	jr              nz, L0F8D         ; Return if not =0
+	dec             hl                ; Get back timer address
+	bit             6, (hl)           ; Check "free-running" flag
+	jr              z, L0F8B          ; If one-shot, set expired flag
+
+;	Do free-running byte timer
+
+	inc             hl                ; Get second byte (restart value)
+	inc             hl
+	ld              a, (hl)
+	dec             hl                ; Restart timer
+	ld              (hl), a
+	dec             hl                ; Get back timer address
+L0F8B:
+	set             7, (hl)           ; Set timer expired flag
+L0F8D:
+	pop             hl                ; Get back timer address
+	ret                               ;   and return
+
+L0F8F:
+	ld              (hl), d           ; Store DE in timer data
+	dec             hl
+	ld              (hl), e
+	pop             hl                ; Get back timer addr and return
+	ret
+
+;***************************************
+;	1F9A	PInitTimers
+;
+; Parameter block version of 1FC7
+;
+; Parm 1 (word) = event timer list pointer
+; Parm 2 (word) = pointer to aux storage for free-running word timers
+;***************************************
+_PInitTimers:
+	ld              bc, P_InitTimers
+	ld              de, ParmArea
+	call            PCopy
+	ld              hl, (ParmArea)
+	ld              de, (ParmArea+2)
+
+;***************************************
+;	1FC7	InitTimers
+;
+; This routine initializes the event timer pointers
+;
+; Timer counter list consists of 3 byte entries
+; +0	timer flags:
+;	bit 0 = ?
+;	bit 1 = ?
+;	bit 2 = ?
+;	bit 3 = 0 for byte, 1 for word
+;	bit 4 = 1 for end of list
+;	bit 5 = 1 if inactive entry
+;	bit 6 = 0 for one-shot, 1 for free-running
+;	bit 7 = is set to 1 when timer runs out
+; +1,+2	timer data:
+;	byte one-shot, +1=counter
+;	byte free-running, +1=counter, +2=restart value
+;	word one-shot, +1=counter LSB, +2=counter MSB
+;	word free-running, +1/+2 = pointer to two words
+;		first word is counter
+;		second word is restart value
+;
+; ENTRY	HL = event timer list pointer
+;	DE = pointer to aux storage for free-running word timers
+;***************************************
+_InitTimers:
+	ld              (TimerList), hl   ; Store timer counter list pointer
+	ld              (hl), 0x30        ; Set end of list flag
+	ex              de, hl
+	ld              (TimerAux), hl
+	ret
+
+;***************************************
+;	1F9D	PStopTimer
+;
+; Parameter block version of 1FCA
+;
+; Parm 1 (byte) = event timer index (0=first timer)
+;***************************************
+_PStopTimer:
+	ld              bc, P_StopTimer
+	ld              de, ParmArea+4
+	call            PCopy
+	ld              a, (ParmArea+4)
+
+;***************************************
+;	1FCA	StopTimer
+;
+; This routine deactivates a timer.  If the timer is a free-
+; running word timer, its auxiliary storage is deallocated.
+;
+; ENTRY	A = event timer index (0=first timer)
+;
+; EXIT: HL = ? (they went to the effort to save something)
+;***************************************
+_StopTimer:
+	ld              hl, (TimerList)   ; Get timer list pointer
+	or              a
+	jr              z, L0FD7          ; Branch if parameter =0?
+L0FCF:
+	bit             4, (hl)           ; Test end-of-list flag
+	ret             nz                ; Return if end of list
+	inc             hl                ; Point to next timer
+	inc             hl
+	inc             hl
+	dec             a
+	jr              nz, L0FCF         ; Loop until timer found
+L0FD7:
+	bit             5, (hl)
+	ret             nz                ; Return if timer inactive
+	set             5, (hl)           ; Make timer inactive
+	bit             6, (hl)           ; Test "free-running" flag
+	ret             z                 ; Return if one-shot
+	bit             3, (hl)           ; Test byte/word flag
+	ret             z                 ; Return if byte
+	inc             hl                ; Get "real" timer pointer
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	push            de                ; Save "real" timer pointer
+
+;	Update the auxiliary storage pointers of other timers
+
+	ld              hl, (TimerList)   ; Get timer list pointer
+L0FEE:
+	bit             4, (hl)           ; Branch if end of list
+	jr              nz, L1020
+	bit             5, (hl)           ; Go to next timer if inactive
+	jr              nz, L0FFD
+	ld              a, (hl)           ; Test for free-running word timer
+	and             0x48
+	cp              0x48
+L0FFD:
+	inc             hl                ; HL=T+1
+	inc             hl                ; HL=T+2
+	jr              nz, L1019         ; Go to next timer if not
+	ld              a, (hl)           ; Compare aux storage addrs of timer
+	cp              d                 ;   we're stopping and current timer
+	jr              c, L1019          ; Go to next timer if the stopped
+	jr              nz, L100D         ;   timer's storage address is higher
+	dec             hl                ; HL=T+1
+	ld              a, (hl)
+	cp              e
+	inc             hl                ; HL=T+2
+	jr              c, L1019
+;		RET	Z		; Return if storage cross-linked
+	                                  ;   (BUG: data still on stack!)
+L100D:
+	ld              d, (hl)           ; Get current timer's storage
+	dec             hl                ; HL=T+1;   address
+	ld              e, (hl)
+	dec             de                ; Subtract 4
+	dec             de
+	dec             de
+	dec             de
+	ld              (hl), e           ; Put it back
+	inc             hl                ; HL=T+2
+	ld              (hl), d
+L1019:
+	inc             hl                ; HL=T+3; Point to next timer
+	jr              L0FEE
+
+;	Delete the timer's auxiliary storage
+
+L1020:
+	xor             a                 ; Clear carry
+	pop             de                ; Get aux storage addr to delete
+	push            hl                ; Save address of timer record
+	ld              hl, (TimerAux)    ; Get end of aux storage
+	sbc             hl, de            ; Subtract start of timer
+	ld              c, l              ; Set up count
+	ld              b, h
+	ld              l, e              ; Dest is deleted timer
+	ld              h, d
+	inc             hl                ; Source is deleted timer + 4
+	inc             hl
+	inc             hl
+	inc             hl
+	ldir                              ; Move rest of aux storage down
+	ld              bc, -8            ; HL = old end of aux storage + 4
+	add             hl, bc            ; HL - 8 = new end of aux storage
+	ld              (TimerAux), hl    ; Store new end of aux storage
+	pop             hl                ; Recover address of timer record
+	ret
+
+;***************************************
+;	1FA0	PStartTimer
+;
+; Parameter block version of 1FCD
+;
+; Parm 1 (byte) = 0 if one-shot, else free-running
+; Parm 2 (word) = max timer count
+;***************************************
+_PStartTimer:
+	ld              bc, P_StartTimer
+	ld              de, ParmArea+5
+	call            PCopy
+	ld              hl, (ParmArea+6)
+	ld              a, (ParmArea+5)
+
+;***************************************
+;	1FCD	StartTimer
+;
+; This routine activates a timer.  If the timer is a free-
+; running word timer, its auxiliary storage is allocated.
+;
+; ENTRY	A = 0 if one-shot, else free-running
+;	HL = max timer count
+;
+; EXIT:	A = event timer index (0=first timer)
+;***************************************
+_StartTimer:
+	ld              c, a              ; C = timer number
+	ex              de, hl            ; DE = max count
+	ld              hl, (TimerList)   ; Get pointer to timer list
+	xor             a                 ; Timer index = 0
+	ld              b, a
+L105A:
+	bit             5, (hl)           ; Test if timer inactive
+	jr              z, L109C          ; Skip to next timer if active
+	push            hl                ; Save timer pointer
+	ld              a, (hl)           ; Get timer flags
+	and             0x30              ; Clear all bits except end of list
+;		OR	20H		; Mark timer inactive (already set!)
+	ld              (hl), a           ; Store timer flags
+	xor             a                 ; Is it a byte timer?
+	or              d
+	jr              nz, L1074         ; Branch if word timer
+	or              c                 ; If "free-running" parameter
+	jr              z, L106E
+	set             6, (hl)           ;   then set "free-running" bit
+L106E:
+	inc             hl                ; Set current and max values
+	ld              (hl), e
+	inc             hl
+	ld              (hl), e
+	jr              L10B6             ; Exit
+
+;	Initialize a word timer
+
+L1074:
+	set             3, (hl)           ; Set "word timer" bit
+	ld              a, c
+	or              a
+	jr              z, L1095          ; Branch if one-shot
+	push            de                ; HL = timer pointer
+	ld              de, (TimerAux)    ; DE = next aux storage pointer
+	set             6, (hl)           ; Set "free running" bit
+	inc             hl                ; Store aux pointer in timer
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+	ex              de, hl            ; HL = aux storage pointer
+	pop             de                ; Initialize current value
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+	inc             hl                ; Initialize max value
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+	inc             hl                ; Update aux storage pointer
+	ld              (TimerAux), hl
+	jr              L10B6             ; Exit
+
+;	Initialize one-shot word timer
+
+L1095:
+	inc             hl                ; Store current value
+	ld              (hl), e
+	inc             hl
+	ld              (hl), d
+
+;	Activate timer and return index in A
+
+L10B6:
+	pop             hl                ; Recover timer pointer
+	res             5, (hl)           ; Clear "inactive" bit
+	ld              a, b              ; A = timer index
+	ret
+
+;	Skip to next timer
+
+L109C:
+	inc             b                 ; Increment timer index
+	bit             4, (hl)           ; Test for end of list
+	res             4, (hl)           ; Clear "end of list" flag
+	inc             hl                ; Point to next timer
+	inc             hl
+	inc             hl
+	jr              z, L105A          ; Branch if not end of list
+
+;	Timer list full, add a new one
+
+L10A6:
+	ld              (hl), 0x30        ; Init timer to end of list
+	jr              L105A             ; Go check the next timer
+
+; If timers are used with interrupts, the following should be used instead:
+;		
+;;	Skip to next timer
+;
+;L109C		BIT	4,(HL)		; Test for end of list
+;		JR	NZ,L10A6	; Branch if end of list
+;L10A0		INC	HL		; Point to next timer
+;		INC	HL
+;		INC	HL
+;		INC	B		; Increment timer index
+;		JR	L105A		; Go check the next timer
+;		
+;;	Timer list full, add a new one
+;
+;L10A6		PUSH	HL
+;		INC	HL		; Point to next timer
+;		INC	HL
+;		INC	HL
+;		LD	(HL),30H	; Init timer to end of list
+;		POP	HL
+;		RES	4,(HL)		; Clear "end of list" flag
+;		JR	L10A0		; Go check the next timer
+
+;***************************************
+;	1FA3	PTestTimer
+;
+; Parameter block version of 1FD0
+;
+; Parm 1 (byte) = event timer index (0=first timer)
+;***************************************
+_PTestTimer:
+	ld              bc, P_TestTimer
+	ld              de, ParmArea+8
+	call            PCopy
+	ld              a, (ParmArea+8)
+
+;***************************************
+;	1FD0	TestTimer
+;
+; This routine tests a timer's completion flag.
+;
+; ENTRY	A = event timer index (0=first timer)
+;
+; EXIT:	A = 1 if timer expired, else 0
+;	Z-flag = set according to A
+;***************************************
+_TestTimer:
+	ld              c, a              ; C = timer index
+	ld              hl, (TimerList)   ; HL = timer list pointer
+	ld              de, 0x0003        ; Timers are 3 bytes each
+	or              a                 ; Skip loop if first timer
+	jr              z, L10DE
+L10D6:
+	bit             4, (hl)           ; End of list?
+	jr              nz, L10E6         ; Return 0 if so
+	add             hl, de            ; Point to next timer
+	dec             c                 ; Decrement count
+	jr              nz, L10D6         ; Loop if not desired timer
+L10DE:
+	bit             5, (hl)           ; Return zero if timer inactive
+	jr              nz, L10E6
+	bit             7, (hl)           ; Return 1 if timer expired
+	jr              nz, L10E9
+L10E6:
+	xor             a                 ; Return 0
+	ret
+
+L10E9:
+	bit             6, (hl)           ; Test "free-running" bit
+	jr              nz, L10EF         ; If not free-running,
+	set             5, (hl)           ;   set inactive flag
+L10EF:
+	res             7, (hl)           ; Clear expired flag
+	xor             a
+	inc             a                 ; Return 1
+	ret
+
+L09D5:
+	ld              (iy+0x01), a
+L09D8:
+	ld              l, (ix+0x00)
+	ld              h, (ix+0x01)
+	ld              de, 0x0005
+	add             hl, de
+	ex              de, hl
+	ld              a, (de)
+	ld              l, a
+	inc             de
+	ld              a, (de)
+	ld              h, a
+	push            hl
+	ld              l, (ix+0x02)
+	ld              h, (ix+0x03)
+	ld              a, (hl)
+	sla             a
+	ld              b, 0x00
+	ld              c, a
+	pop             hl
+	add             hl, bc
+	ret
+
+D1A92:
+.byte   "PRESS BUTTON ON KEYPAD."
+.byte    O,O
+
+;		Default color table
+
+A143B:
+.byte   0x00,0x00,0x00,0xF0,0xF0,0xF0,0xF0,0xF0
+.byte   0xF0,0xF0,0xF0,0xF0,0xD0,0x80,0x90,0xB0
+.byte   0x30,0x40
+
+;		First row of COLECOVISION
+
+A144D:
+.byte   0x60,0x61,0x68,0x69,0x70,0x71,0x78,0x79
+.byte   0x80,0x81,0x88,0x89,0x64,0x65,0x6C,0x74
+.byte   0x75,0x7C,0x84,0x85,0x8C,0x8D
+
+;		Second row of COLECOVISION
+
+A1463:
+.byte   0x62,0x63,0x6A,0x6B,0x72,0x73,0x7A,0x7B
+.byte   0x82,0x83,0x8A,0x8B,0x66,0x67,0x6D,0x76
+.byte   0x77,0x7D,0x86,0x87,0x8E,0x8F
+
+D1479:
+.byte   "TURN GAME OFF"
+
+D1486:
+.byte   "BEFORE INSERTING CARTRIDGE"
+
+D14A0:
+.byte   "OR EXPANSION MODULE."
+
+A14B4:
+.byte   0x1D                                     ; (c)
+.byte   " 1982 COLECO"
+A14C1:
+.byte   0x1E,0x1F                                ; (tm)
+
+;		Character cell data for COLECOVISION
+
+A14C3:
+.byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+.byte   0x3F,0x7F,0xFF,0xFF,0xF3,0xF3,0xF0,0xF0
+.byte   0x00,0x80,0xC0,0xC0,0xC0,0xC0,0x00,0x00
+.byte   0x3F,0x7F,0xFF,0xFF,0xF3,0xF3,0xF3,0xF3
+.byte   0x00,0x80,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0
+.byte   0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0xF0
+.byte   0xFF,0xFF,0xFF,0xF0,0xF0,0xFF,0xFF,0xFF
+.byte   0xC0,0xC0,0xC0,0x00,0x00,0x00,0x00,0x00
+.byte   0xF1,0xF1,0xF1,0x7B,0x7B,0x7B,0x3F,0x3F
+.byte   0xE0,0xE0,0xE0,0xC0,0xC0,0xC0,0x80,0x80
+.byte   0x1F,0x3F,0x7F,0x79,0x78,0x7F,0x7F,0x3F
+.byte   0x80,0xC0,0xE0,0xE0,0x00,0x80,0xC0,0xE0
+.byte   0xF3,0xF3,0xFB,0xFB,0xFB,0xFF,0xFF,0xFF
+.byte   0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0
+.byte   0xF3,0xF3,0xFF,0xFF,0x7F,0x3F,0x00,0x00
+.byte   0xC0,0xC0,0xC0,0xC0,0x80,0x00,0x00,0x00
+.byte   0xF0,0xF0,0xFF,0xFF,0xFF,0xFF,0x00,0x00
+.byte   0x00,0x00,0xC0,0xC0,0xC0,0xC0,0x00,0x00
+.byte   0x3F,0x1F,0x1F,0x1F,0x0E,0x0E,0x00,0x00
+.byte   0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+.byte   0xF0,0xF0,0xF0,0xF0,0xF0,0xF0,0x00,0x00
+.byte   0x1F,0x01,0x79,0x7F,0x3F,0x1F,0x00,0x00
+.byte   0xE0,0xE0,0xE0,0xE0,0xC0,0x80,0x00,0x00
+.byte   0xFF,0xF7,0xF7,0xF7,0xF3,0xF3,0x00,0x00
+.byte   0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0x00,0x00
+
+;		Character cell data for (c) and TM characters
+
+A158B:
+.byte   0x3C,0x42,0x99,0xA1,0xA1,0x99,0x42,0x3C  ; (C)
+.byte   0x1F,0x04,0x04,0x04,0x00,0x00,0x00,0x00  ; T
+.byte   0x44,0x6C,0x54,0x54,0x00,0x00,0x00,0x00  ; M
+
+;		Character cell data for default font
+
+A15A3:
+.byte   0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00  ; sp
+.byte   0x08,0x1C,0x1C,0x18,0x10,0x00,0x30,0x00  ; !
+.byte   0x33,0x33,0x22,0x00,0x00,0x00,0x00,0x00  ; "
+.byte   0x36,0x36,0x7F,0x36,0x7F,0x36,0x36,0x00  ; #
+.byte   0x0C,0x1F,0x2C,0x1E,0x0D,0x3E,0x0C,0x00  ; $
+.byte   0x00,0x63,0x66,0x0C,0x18,0x33,0x63,0x00  ; %
+.byte   0x38,0x64,0x64,0x38,0x6D,0x46,0x3B,0x00  ; &
+.byte   0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00  ; '
+.byte   0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00  ; (
+.byte   0x18,0x0C,0x06,0x06,0x06,0x0C,0x18,0x00  ; )
+.byte   0x08,0x6B,0x3E,0x1C,0x3E,0x6B,0x08,0x00  ; *
+.byte   0x00,0x08,0x08,0x3E,0x08,0x08,0x00,0x00  ; +
+.byte   0x00,0x00,0x00,0x00,0x18,0x18,0x30,0x00  ; ,
+.byte   0x00,0x00,0x00,0x3E,0x00,0x00,0x00,0x00  ; -
+.byte   0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00  ; .
+.byte   0x00,0x03,0x06,0x0C,0x18,0x30,0x60,0x00  ; /
+D1623:
+.byte   0x1C,0x26,0x63,0x63,0x63,0x32,0x1C,0x00  ; 0
+.byte   0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00  ; 1
+.byte   0x3E,0x63,0x07,0x1E,0x3C,0x70,0x7F,0x00  ; 2
+.byte   0x3F,0x06,0x0C,0x1E,0x03,0x63,0x3E,0x00  ; 3
+.byte   0x0E,0x1E,0x36,0x66,0x7F,0x06,0x06,0x00  ; 4
+.byte   0x7E,0x60,0x7E,0x03,0x03,0x63,0x3E,0x00  ; 5
+.byte   0x1E,0x30,0x60,0x7E,0x63,0x63,0x3E,0x00  ; 6
+.byte   0x7F,0x63,0x06,0x0C,0x18,0x18,0x18,0x00  ; 7
+.byte   0x3C,0x62,0x72,0x3C,0x4F,0x43,0x3E,0x00  ; 8
+.byte   0x3E,0x63,0x63,0x3F,0x03,0x06,0x3C,0x00  ; 9
+.byte   0x00,0x00,0x18,0x18,0x00,0x18,0x18,0x00  ; :
+.byte   0x00,0x18,0x18,0x00,0x18,0x18,0x30,0x00  ; ;
+.byte   0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00  ; <
+.byte   0x00,0x00,0x3E,0x00,0x3E,0x00,0x00,0x00  ; =
+.byte   0x30,0x18,0x0C,0x06,0x0C,0x18,0x30,0x00  ; >
+.byte   0x3C,0x66,0x06,0x0C,0x18,0x00,0x18,0x00  ; ?
+.byte   0x3E,0x63,0x67,0x6B,0x6E,0x60,0x3E,0x00  ; @
+D16AB:
+.byte   0x1C,0x36,0x63,0x63,0x7F,0x63,0x63,0x00  ; A
+.byte   0x7E,0x63,0x63,0x7E,0x63,0x63,0x7E,0x00  ; B
+.byte   0x1E,0x33,0x60,0x60,0x60,0x33,0x1E,0x00  ; C
+.byte   0x7C,0x66,0x63,0x63,0x63,0x66,0x7C,0x00  ; D
+.byte   0x7F,0x60,0x60,0x7E,0x60,0x60,0x7F,0x00  ; E
+.byte   0x7F,0x60,0x60,0x7E,0x60,0x60,0x60,0x00  ; F
+.byte   0x1F,0x30,0x60,0x67,0x63,0x33,0x1F,0x00  ; G
+.byte   0x63,0x63,0x63,0x7F,0x63,0x63,0x63,0x00  ; H
+.byte   0x3F,0x0C,0x0C,0x0C,0x0C,0x0C,0x3F,0x00  ; I
+.byte   0x03,0x03,0x03,0x03,0x03,0x63,0x3E,0x00  ; J
+.byte   0x63,0x66,0x6C,0x78,0x7C,0x6E,0x67,0x00  ; K
+.byte   0x60,0x60,0x60,0x60,0x60,0x60,0x7F,0x00  ; L
+.byte   0x63,0x77,0x7F,0x7F,0x6B,0x63,0x63,0x00  ; M
+.byte   0x63,0x73,0x7B,0x7F,0x6F,0x67,0x63,0x00  ; N
+.byte   0x3E,0x63,0x63,0x63,0x63,0x63,0x3E,0x00  ; O
+.byte   0x7E,0x63,0x63,0x63,0x7E,0x60,0x60,0x00  ; P
+.byte   0x3E,0x63,0x63,0x63,0x6F,0x66,0x3D,0x00  ; Q
+.byte   0x7E,0x63,0x63,0x67,0x7C,0x6E,0x67,0x00  ; R
+.byte   0x3C,0x66,0x60,0x3E,0x03,0x63,0x3E,0x00  ; S
+.byte   0x3F,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x00  ; T
+.byte   0x63,0x63,0x63,0x63,0x63,0x63,0x3E,0x00  ; U
+.byte   0x63,0x63,0x63,0x77,0x3E,0x1C,0x08,0x00  ; V
+.byte   0x63,0x63,0x6B,0x7F,0x7F,0x77,0x63,0x00  ; W
+.byte   0x63,0x77,0x3E,0x1C,0x3E,0x77,0x63,0x00  ; X
+.byte   0x33,0x33,0x33,0x1E,0x0C,0x0C,0x0C,0x00  ; Y
+.byte   0x7F,0x07,0x0E,0x1C,0x38,0x70,0x7F,0x00  ; Z
+.byte   0x1E,0x18,0x18,0x18,0x18,0x18,0x1E,0x00  ; [
+.byte   0x00,0x60,0x30,0x18,0x0C,0x06,0x03,0x00  ; \
+.byte   0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00  ; ]
+.byte   0x08,0x1C,0x36,0x63,0x00,0x00,0x00,0x00  ; ^
+.byte   0x00,0x00,0x00,0x00,0x00,0x00,0x7F,0x00  ; _
+.byte   0x18,0x18,0x0C,0x00,0x00,0x00,0x00,0x00  ; `
+.byte   0x00,0x00,0x3C,0x06,0x3E,0x66,0x3E,0x00  ; a
+.byte   0x60,0x60,0x7C,0x66,0x66,0x66,0x7C,0x00  ; b
+.byte   0x00,0x00,0x3C,0x66,0x60,0x66,0x3C,0x00  ; c
+.byte   0x06,0x06,0x3E,0x66,0x66,0x66,0x3E,0x00  ; d
+.byte   0x00,0x00,0x3C,0x66,0x7E,0x60,0x3C,0x00  ; e
+.byte   0x1C,0x36,0x30,0x78,0x30,0x30,0x30,0x00  ; f
+.byte   0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x3C  ; g
+.byte   0x60,0x60,0x7C,0x66,0x66,0x66,0x66,0x00  ; h
+.byte   0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00  ; i
+.byte   0x06,0x00,0x0E,0x06,0x06,0x66,0x3C,0x00  ; j
+.byte   0x60,0x60,0x66,0x6C,0x78,0x6C,0x66,0x00  ; k
+.byte   0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00  ; l
+.byte   0x00,0x00,0x76,0x7F,0x6B,0x63,0x63,0x00  ; m
+.byte   0x00,0x00,0x7C,0x66,0x66,0x66,0x66,0x00  ; n
+.byte   0x00,0x00,0x3C,0x66,0x66,0x66,0x3C,0x00  ; o
+.byte   0x00,0x00,0x7C,0x66,0x66,0x7C,0x60,0x60  ; p
+.byte   0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x03  ; q
+.byte   0x00,0x00,0x7C,0x66,0x60,0x60,0x60,0x00  ; r
+.byte   0x00,0x00,0x3E,0x60,0x3C,0x06,0x7C,0x00  ; s
+.byte   0x00,0x18,0x3C,0x18,0x18,0x18,0x0C,0x00  ; t
+.byte   0x00,0x00,0x66,0x66,0x66,0x66,0x3E,0x00  ; u
+.byte   0x00,0x00,0x66,0x66,0x66,0x3C,0x18,0x00  ; v
+.byte   0x00,0x00,0x63,0x63,0x6B,0x7F,0x36,0x00  ; w
+.byte   0x00,0x00,0x66,0x3C,0x18,0x3C,0x66,0x00  ; x
+.byte   0x00,0x00,0x66,0x66,0x66,0x3E,0x06,0x7C  ; y
+.byte   0x00,0x00,0x7E,0x0C,0x18,0x30,0x7E,0x00  ; z
+.byte   0x0C,0x18,0x18,0x30,0x18,0x18,0x0C,0x00  ; {
+.byte   0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00  ; |
+.byte   0x30,0x18,0x18,0x0C,0x18,0x18,0x30,0x00  ; }
+.byte   0x30,0x5A,0x0C,0x00,0x00,0x00,0x00,0x00  ; ~
+.byte   0x54,0x28,0x54,0x28,0x54,0x28,0x54,0x00  ; del
+
+;		Character cell to font data mapping for COLECOVISION
+
+A18A3:
+.byte   0x01,0x02,0x0E,0x0F,0x08,0x09,0x12,0x13  ; CV
+.byte   0x03,0x04,0x0E,0x0F,0x05,0x14,0x00,0x00  ; OI
+.byte   0x05,0x00,0x10,0x11,0x0A,0x0B,0x15,0x16  ; LS
+.byte   0x06,0x07,0x10,0x11,0x05,0x14,0x00,0x00  ; EI
+.byte   0x01,0x02,0x0E,0x0F,0x03,0x04,0x0E,0x0F  ; CO
+.byte   0x03,0x04,0x0E,0x0F,0x0C,0x0D,0x17,0x18  ; ON
+.byte   0xFF                                     ; end of list
+
+;***************************************
+;	1F82	FillVRAM
+;
+; Fills a block of VRAM with the same byte
+;
+; ENTRY	HL = start VRAM address
+;	DE = count
+;	A  = fill byte
+; EXIT	AF, C, DE destroyed
+;***************************************
+A18D4:
+_FillVRAM:
+	ld              c, a              ; Save fill byte
+	ld              a, l              ; Output low byte of VRAM address
+	out             (IO_VDP_Addr), a
+	ld              a, h              ; Output high byte of VRAM address
+	or              0x40              ;   set "this is an address" bit
+	out             (IO_VDP_Addr), a
+L18DD:
+	ld              a, c              ; Get back fill byte (and delay?)
+	out             (IO_VDP_Data), a  ; Store data byte
+	dec             de                ; Decrement count
+	ld              a, d
+	or              e
+	jr              nz, L18DD         ; Store bytes until done
+	jp              _VDP_Status       ; Read VDP status register
+
+.byte   O
+
+;***************************************
+;	1F85	InitVDP
+;
+; Initialize the VDP chip
+;***************************************
+A18E9:
+_InitVDP:
+	ld              bc, 0x0000        ; Register 0: half-text 32x24 mode
+	call            _WriteReg
+
+	ld              bc, 0x0180        ; Reg 1, 32x24 mode, 16K DRAM, blank
+	call            _WriteReg
+	nop
+	nop
+
+A18F7:
+                                   ; (called by Tomarc the Barbarian)
+
+	ld              a, 0x03           ; Pattern generator table
+	ld              hl, 0x0000        ;   VRAM address 0000H
+	call            _BaseLoad
+
+	ld              a, 0x02           ; Name table (display)
+	ld              hl, 0x1800        ;   VRAM address 1800H
+	call            _BaseLoad
+
+	xor             a                 ; Sprite attribute table
+	ld              hl, 0x1B00        ;   VRAM address 1B00H
+	call            _BaseLoad
+
+	ld              a, 0x04           ; Color table
+	ld              hl, 0x2000        ;   VRAM address 2000H
+	call            _BaseLoad
+
+	ld              a, 0x01           ; Sprite pattern generator
+.set  D1AC5, $+2                      ; DB '8'
+	ld              hl, 0x3800        ;   VRAM address 3800H
+	call            _BaseLoad
+
+	ld              bc, 0x0700        ; Reg 7 (FG/BG color), set both to 0
+	jp              _WriteReg
+
+;***************************************
+;	1F7F	InitFont
+;
+; Initialize pattern generator (font) table
+;***************************************
+_InitFont:
+	ld              hl, A158B         ; Point to main ASCII bitmaps
+	ld              de, 0x001D        ;   First character code = 1DH
+	ld              iy, 0x0063        ;   bug fixed (was 0060)
+	call            _BlkWrtVRAM3      ; Pattern generator table
+
+	ld              hl, A15A3         ; Point to blank bitmap
+	ld              de, 0x0000        ;   First character code = 00H
+_BlkWrtVRAM31:
+	ld              a, 0x03           ;   Pattern generator table
+	jp              L1EA7             ; LD IY,0001H / JP _BlkWrtVRAM
+
+;***************************************
+;
+; Search for '/' character in text pointed to by HL.
+;
+; ENTRY	HL points to text
+;
+; EXIT:	HL points to '/' character
+;	BC = number of bytes before '/' character
+;
+;***************************************
+L1946:
+	ld              bc, 0x0000        ; Initialize count to zero
+L1949:
+	ld              a, (hl)           ; Get next byte
+	cp              '/'               ; Return if '/' character
+	ret             z
+	inc             hl                ; Point to next byte
+	inc             bc                ; Increment count
+	jr              L1949             ; Go back for more
+
+;***************************************
+;
+; Center a line of text on the screen.
+;
+; ENTRY	BC = length of text
+;	DE = pointer to text
+;	HL = screen position at left end of line
+;
+;***************************************
+L1951:
+	push            bc                ; Move BC to IY (count)
+	pop             iy
+	ld              a, 0x20           ; A = (20H - C) / 2
+	sbc             a, c              ;   (centering offset)
+	rra
+	ld              b, 0x00
+	ld              c, a
+	add             hl, bc            ; HL = HL + BC
+	ex              de, hl            ; HL = text ptr, DE = scrn position
+	jp              _BlkWrtVRAM2      ; LD A,02H / JP _BlkWrtVRAM
+
+;***************************************
+;
+; Delay routines
+;
+; 1968 is the infamous "seven second delay" and is apparently
+; not called elsewhere in the ROM and shouldn't be called by
+; "well behaved" cartridges.  Which means that it would be safe
+; to change, except that some Xonox cartridges call it.  However,
+; shortening the delay would probably make some of those games
+; more playable, so we can change it in the name of humanity.
+;
+; 196B delays using a count in the HL register.  The delay is
+; approximately H/3 seconds.
+;
+;***************************************
+;A1968		LD	HL,1700H	; Too long
+;A196B		LD	DE,00FFH	; Load inner loop count
+;L196E		DEC	DE
+;		LD	A,D
+;		OR	E
+;		JR	NZ,L196E
+;		DEC	HL
+;		LD	A,H
+;		OR	L
+;		JR	NZ,A196B
+;		RET
+
+; This replacement is based on Kev's patch.  Every outer loop it checks
+; both left fire buttons and aborts the delay loop if either is pressed.
+;
+; The main difference is that I save the AF and BC registers on the
+; assumption that anyone "byte-fisted" enough to call the ROM instead of
+; spending a few bytes to write his own might also expect it not to mess
+; with the A register or B register.
+;
+; The other side-effect of this replacement delay routine is that the
+; joystick ports are left in stick mode, but this is probably okay.
+
+L196C:
+	jr              z, L1978          ; exit if pressed
+
+	ld              de, 0x00E8        ; load inner loop counter (about 10% less)
+L196E:
+	dec             de                ; do inner loop
+	ld              a, d
+	or              e
+	jr              nz, L196E
+
+	dec             hl                ; do outer loop
+	ld              a, h
+	or              l
+	jr              nz, L196B
+
+L1978:
+	pop             bc                ; restore regs & return
+	pop             af
+	ret
+
+A1968:
+	ld              hl, 0x1700        ; startup screen delay timer
+A196B:
+	push            af                ; original routine didn't mess with A or B!
+	push            bc
+
+L196B:
+	out             (0xC0), a         ; select left fire/stick mode FIXME
+	in              a, (0xFC)         ; read left fire button FIXME
+	ld              b, a
+	in              a, (0xFF)         ; read right fire button FIXME
+	and             b                 ; OR the two sticks together
+	and             0x40              ; mask out the fire button bit
+	jr              L196C
+
+;***************************************
+;	1F7C	SkillScrn
+;
+; Displays the skill select screen and returns
+;***************************************
+A1979:
+_SkillScrn:
+	call            InitScrn          ; Clear VRAM and initialize the VDP
+
+	ld              bc, 0x0F04        ; Reg 0FH (FG/BG color), value = 4
+	call            _WriteReg         ;   write it
+
+	ld              hl, Skill_Msgs    ; Put up skill screen messages
+	call            ScrnMsgs
+
+	ld              hl, (ClrTabShad)  ; Get color table VRAM addr
+	ld              de, 0x0020        ;   32 bytes
+	ld              a, 0xF4           ;   Fill with F4H
+	call            _FillVRAM         ;   fill it
+
+	ld              bc, 0x01C0        ; Unblank the screen
+	jp              _WriteReg
+
+.set    D1AC9, $+3                    ; DB 'S'
+D1A7C:
+.byte   "TO SELECT GAME OPTION,"
+D1AA9:
+.byte   "1 = SKILL 1/ONE PLAYER"
+
+;			HL=msg,IY=len,DE=scrn
+Skill_Msgs:
+.word   D1A7C,22*1024+0x0025          ; 'TO SELECT GAME OPTION,'
+.word   D1A92,23*1024+0x0065          ; 'PRESS BUTTON ON KEYPAD.'
+.word   D1AA9,22*1024+0x00C5          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x0105          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x0145          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x0185          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x01E5          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x0225          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x0265          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1AA9,22*1024+0x02A5          ; '1 = SKILL 1/ONE PLAYER'
+.word   D1ABF,01*1024+0x0105          ; '2'
+.word   D1AC0,01*1024+0x0145          ; '3'
+.word   D1AC1,01*1024+0x0185          ; '4'
+.word   D1AC2,01*1024+0x01E5          ; '5'
+.word   D1AC3,01*1024+0x0225          ; '6'
+.word   D1AC4,01*1024+0x0265          ; '7'
+.word   D1AC5,01*1024+0x02A5          ; '8'
+.word   D1ABF,01*1024+0x010F          ; '2'
+.word   D1AC0,01*1024+0x014F          ; '3'
+.word   D1AC1,01*1024+0x018F          ; '4'
+.word   D1AC6,03*1024+0x01F1          ; 'TWO'
+.word   D1AC6,03*1024+0x0231          ; 'TWO'
+.word   D1AC6,03*1024+0x0271          ; 'TWO'
+.word   D1AC6,03*1024+0x02B1          ; 'TWO'
+.word   D1ABF,01*1024+0x022F          ; '2'
+.word   D1AC0,01*1024+0x026F          ; '3'
+.word   D1AC1,01*1024+0x02AF          ; '4'
+.word   D1AC9,01*1024+0x01FB          ; 'S'
+.word   D1AC9,01*1024+0x023B          ; 'S'
+.word   D1AC9,01*1024+0x027B          ; 'S'
+.word   D1AC9,01*1024+0x02BB          ; 'S'
+.word   0                             ; End of table
+
+;***************************************
+; Put up the "no cartridge" message
+;***************************************
+
+L13FF:
+	ld              hl, No_Cart_Msgs  ; Put up "TURN GAME OFF" messages
+	call            ScrnMsgs
+
+	ld              hl, 0x8A00        ; Wait a long time for the user to see
+	call            A196B
+
+	ld              bc, 0x0180        ; Then blank the screen
+	call            _WriteReg
+
+L1439:
+	jr              L1439             ;   and go to sleep
+	nop                               ; to allow for patching
+
+;			HL=msg,IY=len,DE=scrn
+No_Cart_Msgs:
+.word   D1479,13*1024+0x01AA          ; 'TURN GAME OFF'
+.word   D1486,26*1024+0x01E4          ; 'BEFORE INSERTING CARTRIDGE'
+.word   D14A0,20*1024+0x0227          ; 'OR EXPANSION MODULE.'
+.word   0                             ; End of table
+
+;***************************************
+; Display a bunch of text all over the screen
+;
+;	ENTRY:	HL=table pointer
+;	EXIT:	BC=0
+;
+; The table is a bunch of 4-byte entries:
+;	0-1	address of message text data
+;	2	low byte of screen address
+;	3	high byte of screen address in low 2 bits
+;		message text length in high 6 bits
+;***************************************
+
+ScrnMsgs:
+	ld              c, (hl)           ; Get message address to BC
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+
+	ld              a, c              ; Test for end of table
+	or              b
+	ret             z
+
+	ld              e, (hl)           ; Get display address to DE
+	inc             hl
+	ld              a, (hl)
+	and             0x03
+	ld              d, a
+
+	ld              a, (hl)           ; Get message length to A
+	inc             hl
+	rrca
+	rrca
+	and             0x3F
+
+	push            bc                ; Save message address
+	ex              (sp), hl          ; Msg addr to HL, save table pointer
+
+	ld              c, a              ; Move message length to IY
+	ld              b, 0
+	push            bc
+	pop             iy
+
+	call            _BlkWrtVRAM2      ; LD A,02H/JP _BlkWrtVRAM
+
+	pop             hl                ; Recover table pointer
+	jr              ScrnMsgs          ; Loop for next message
+
+;***************************************
+;	1FAF	
+;
+; Parameter block version of 1FE5
+;
+; Parm 1 (byte) = ?
+; Parm 2 (lit)  = ?
+;***************************************
+L0655:
+	ld              bc, D064F
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              hl, (ParmArea+1)
+
+;***************************************
+;	1FE5	
+;
+; ENTRY	A = ?
+;	HL = ?
+;***************************************
+L0664:
+	ld              (0x73CA), a
+	xor             a
+;		LD	(73CBH),A
+	ld              (0x73CC), a
+	ld              (0x73D1), hl
+;		LD	(73CDH),HL
+	ld              (0x73CF), hl
+	jp              L0669
+
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O
+
+;***************************************
+;	1FE8	
+;
+;
+;***************************************
+L0679:
+	ld              a, (D73C6)
+	push            af
+	xor             a
+	ld              (D73C6), a
+L0682:
+	ld              a, (0x73CC)
+	ld              hl, 0x73CB
+	cp              (hl)
+	jr              z, L06BC
+	ld              hl, (0x73CF)
+	ld              e, (hl)
+	inc             hl
+	ld              d, (hl)
+	inc             hl
+	ld              b, (hl)
+	inc             hl
+	push            de
+	pop             ix
+	push            hl
+	call            L06E3
+	ld              a, (0x73CC)
+	inc             a
+	ld              hl, 0x73CA
+	cp              (hl)
+	jr              nz, L06B3
+	xor             a
+	ld              hl, (0x73D1)
+	ld              (0x73CF), hl
+	pop             hl
+	jr              L06B9
+
+L06B3:
+	pop             hl
+	ld              (0x73CF), hl
+L06B9:
+	ld              (0x73CC), a
+	jr              L0682
+
+L06BC:
+	pop             af
+	ld              (D73C6), a
+	ret
+
+.byte   O,O,O,O,O,O,O,O,O,O
+.byte   O,O,O,O,O
+
+;***************************************
+;	1F8B	PBaseLoad
+;
+; Parameter block version of 1FB8
+;
+; P1 (byte) = base register code
+; P2 (word) = raw unshifted VRAM address
+;***************************************
+_PBaseLoad:
+	ld              bc, P_BaseLoad
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              hl, (ParmArea+1)
+
+;***************************************
+;	1FB8	BaseLoad
+;
+; This routine loads a VDP base register with the
+; specified base address.  The base address is stored
+; in one of the shadow registers at 73F2.
+;
+; ENTRY	A = base register code
+;	HL = raw unshifted VRAM address
+;***************************************
+A1B1D:
+_BaseLoad:
+	ld              c, a              ; VDP register code to BC
+	ld              b, 0x00
+	ld              ix, VDPBaseShad
+	add             ix, bc            ; Index into shadow address table
+	add             ix, bc
+	ld              (ix+0x00), l      ; Store shadow copy of base address
+	ld              (ix+0x01), h
+	ld              a, (VDP0Shad)     ; Get current graphics mode
+	bit             1, a
+	jr              z, L1B5C          ; If not in hi-res graphics, go shift
+	ld              a, c
+	cp              0x03              ; Special handling for pattern gen
+	jr              z, L1B40
+	cp              0x04              ;   and color tables
+	jr              nz, L1B5C         ; Else branch to go shift
+
+;	Set color table base address in hi-res graphics mode
+
+	ld              b, 0x03           ; VDP register 3 = color table
+	ld              a, l              ; If VRAM addr = 0,
+	or              h
+	ld              c, 0x7F           ;  set base register to 7FH (1FC0H)
+	jr              z, L1B72
+	ld              c, 0xFF           ; Else set it to FFH (3FC0H)
+	jr              L1B72
+
+;	Set pattern generator base address in hi-res graphics mode
+
+L1B40:
+	ld              b, 0x04           ; VDP register 4 = pattern generator
+	ld              a, l              ; If VRAM addr = 0,
+	or              h
+	ld              c, 0x03           ;   set base register to 03H (1800H)
+	jr              z, L1B72
+	ld              c, 0x07           ; Else set it to 07H (3800H)
+	jr              L1B72
+
+L1B5C:
+	ld              iy, D1B76         ; Get address of shift table
+	add             iy, bc            ; Index into it
+	add             iy, bc
+	ld              a, (iy+0x00)      ; Get shift count
+	ld              b, (iy+0x01)      ; Get VDP register number
+L1B6A:
+	srl             h                 ; Shift the base address right
+	rr              l                 ;   to adjust for VDP register
+	dec             a
+	jr              nz, L1B6A
+	ld              c, l              ; Get shifted VDP register data
+L1B72:
+	jp              _WriteReg         ; Write it to the VDP chip
+
+; Shift table for VDP base addresses (shift, reg num)
+
+D1B76:
+.byte   7,5                           ; 0 = Sprite attribute table
+.byte   11,6                          ; 1 = Sprite pattern generator
+.byte   10,2                          ; 2 = Name table
+.byte   11,4                          ; 3 = Pattern generator
+.byte   6,3                           ; 4 = Color table
+
+; ReadVRAM with the bug fixed
+
+XReadVRAM:
+	ld              a, c              ; no bug if C=00H
+	or              a
+	jr              z, XReadVRAM_a
+
+	inc             b                 ; else account for the missing page
+
+XReadVRAM_a:
+	jp              ReadVRAM
+
+;***************************************
+;	1F8E	PBlkReadVRAM
+;
+; Parameter block version of 1FBB
+;
+; Parm 1 (byte) = VDP table number (0-4)
+; Parm 2 (byte) = VDP table index LSB
+; Parm 3 (byte) = VDP table index MSB
+; Parm 4 (lit)  = pointer to data buffer
+; Parm 5 (word) = VDP table entry count
+;***************************************
+P_BlkReadVRAM:
+P_BlkWrtVRAM:
+.byte   5
+.word   1,1,1,-2,2
+
+_PBlkReadVRAM:
+	ld              bc, P_BlkReadVRAM
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              de, (ParmArea+1)
+	ld              iy, (ParmArea+5)
+	ld              hl, (ParmArea+3)
+
+;***************************************
+;	1FBB	BlkReadVRAM
+;
+; ENTRY	A = VDP table number (0-4)
+;	DE = VDP table index
+;	HL points to data buffer
+;	IY = VDP table entry count
+;***************************************
+A1BA3:
+_BlkReadVRAM:
+	call            VRAM_Index
+	jr              XReadVRAM
+
+.byte   O,O
+
+;***************************************
+;	VRAM_Index
+;
+; This routine returns the actual VRAM address and size
+; of a block of VDP table entries.
+;
+; ENTRY	DE = VDP table index
+;	IY = number of VDP table entries
+;	A  = VDP table number (0-4)
+;
+; EXIT:	BC = number of bytes to move to VRAM
+;	DE = VRAM address
+;	HL register is not changed
+;***************************************
+A1BAA:
+VRAM_Index:
+	ld              (D73FE), iy       ; Save byte count
+	ld              ix, VDPBaseShad   ; VDP base addr shadow array
+	ld              c, a              ; BC = VRAM table index
+	ld              b, 0x00
+	cp              0x04              ; Check if color table
+	jr              nz, L1BC0
+	ld              a, (VDP0Shad)     ; Yes, check for hi-res graphics
+	bit             1, a              ; Don't shift color table unless
+	jr              z, L1BEC          ;   using hi-res graphics
+L1BC0:
+	ld              iy, D1BFF         ; Point to shift table
+	add             iy, bc            ; Index into shift table
+	ld              a, (iy+0x00)      ; Get shift value
+	or              a
+	jr              z, L1BEC          ; Branch if no shift
+L1BCD:
+	sla             e                 ; Shift VRAM offset
+	rl              d
+	dec             a
+	jr              nz, L1BCD         ;   until done
+	push            bc                ; Save VRAM table index
+	ld              bc, (D73FE)       ; Get original byte count
+	ld              a, (iy+0x00)      ; Get shift value
+	or              a
+	jr              z, L1BEB          ; Branch if no shift
+L1BE0:
+	sla             c                 ; Shift byte count
+	rl              b
+	dec             a
+	jr              nz, L1BE0         ;   until done
+	ld              (D73FE), bc       ; Save shifted byte count
+L1BEB:
+	pop             bc                ; Get back VRAM table index
+L1BEC:
+	push            hl                ; Save HL
+	add             ix, bc            ; Index into base addr shadow array
+	add             ix, bc
+	ld              l, (ix+0x00)      ; Get base VRAM address from shadow
+	ld              h, (ix+0x01)
+	add             hl, de            ; Add shifted offset to base addr
+	ex              de, hl            ; Put VRAM address in DE
+	pop             hl                ; Restore HL
+	ld              bc, (D73FE)       ; Get byte count
+	ret
+
+; Shift table for indexes into VDP tables (1, 4, or 8 bytes per entry)
+
+D1BFF:
+.byte   2                             ; 0 = Sprite attribute table
+.byte   3                             ; 1 = Sprite pattern generator table
+.byte   0                             ; 2 = Name table
+.byte   3                             ; 3 = Pattern generator table
+.byte   3                             ; 4 = Color table
+
+;	Copy high 4 bits of (HL) into low 4 bits of (HL)
+
+L01A6:
+	ld              a, (hl)
+	and             0xF0
+	ld              b, a
+	rrca
+	rrca
+	rrca
+	rrca
+	or              b
+	ld              (hl), a
+	ret
+
+;***************************************
+;	1F91	PBlkWrtVRAM
+;
+; Parameter block version of 1FBE
+;
+; Parm 1 (byte) = VDP table number (0-4)
+; Parm 2 (byte) = VDP table index LSB
+; Parm 3 (byte) = VDP table index MSB
+; Parm 4 (lit)  = pointer to data to be written
+; Parm 5 (word) = VDP table entry count
+;***************************************
+_PBlkWrtVRAM:
+	ld              bc, P_BlkWrtVRAM
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+	ld              de, (ParmArea+1)
+	ld              iy, (ParmArea+5)
+	ld              hl, (ParmArea+3)
+
+.byte   0x01                          ; LD BC,nnnn
+_BlkWrtVRAM2:
+	ld              a, 0x02           ; name table (character cells)
+
+;***************************************
+;	1FBE	BlkWrtVRAM
+;
+; ENTRY	A  = VDP table number (0-4)
+;	DE = VDP table index
+;	HL points to data to be written
+;	IY = VDP table entry count
+;	73C7H = 01H to write to RAM sprite attr table
+;***************************************
+A1C27:
+_BlkWrtVRAM:
+	push            af                ; Save VDP table number
+	or              a                 ; If not sprite attribute table,
+	jr              nz, L1C4E         ;   always write to the VDP
+	ld              a, (WrtRAMSprt)   ; Check RAM sprite attr table flag
+	dec             a
+	jr              nz, L1C4E         ; Write to VDP if not 01H
+	ex              (sp), hl          ; Clean up stack and save data pointer
+	ld              hl, (RamSprtTab)  ; Get pointer at 8002H
+	add             hl, de            ; DE*4 = sprite table
+	add             hl, de
+	add             hl, de
+	add             hl, de            ; dest addr = (8002H) + DE
+	ex              de, hl
+	push            iy                ; BC = table entry count
+	pop             bc
+	sla             c                 ; C = C * 4 for sprite table
+	sla             c                 ; I hope BC was <= 3FH!
+	pop             hl                ; Restore (source) data pointer
+	ldir                              ; Copy it
+	ret
+
+_BlkWrtVRAM3:
+	ld              a, 0x03           ; Pattern generator table
+.byte   0x01                          ; LD BC,nnnn
+_BlkWrtVRAM4:
+	ld              a, 0x04           ; Color table
+	jr              _BlkWrtVRAM
+
+.byte   O,O
+
+L1C4E:
+	pop             af                ; Restore VDP table number
+A1C4F:                                ; (Called by Aquattack)
+	call            VRAM_Index        ; Adjust for VDP table size
+	jr              XWrtVRAM          ; Write the data to VRAM
+
+;***************************************
+;	1F94	PInitRAMSprt
+;
+; Parameter block version of 1FC1
+;
+; Parm 1 (byte) = number of sprites
+;***************************************
+_PInitRAMSprt:
+	ld              bc, P_InitRAMSprt
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+
+;***************************************
+;	1FC1	InitRAMSprt
+;
+; This routine initializes the RAM sprite index table
+; pointed to by 8004H with values from 00H to A-1
+;
+; ENTRY	A = number of sprites
+;***************************************
+_InitRAMSprt:
+	ld              b, a              ; B = count
+	xor             a                 ; Init fill to zero
+	ld              hl, (RAMSprtIdx)  ; Get pointer to RAM sprite index table
+L1C6B:
+	ld              (hl), a           ; Initialize array entry
+	inc             hl                ; Increment array pointer
+	inc             a                 ; Increment fill value
+	cp              b                 ; Go back until done
+	jr              nz, L1C6B
+	ret
+
+; WrtVRAM with the bug fixed
+
+XWrtVRAM:
+	ld              a, c              ; no bug if C=00H
+	or              a
+	jr              z, XWrtVRAM_a
+
+	inc             b                 ; else account for the missing page
+
+XWrtVRAM_a:
+	jp              _WrtVRAM
+
+.byte   O,O
+
+;***************************************
+;	1F97	PCopyRAMSprt
+;
+; Parameter block version of 1FC4
+;
+; Parm 1 (byte) = number of sprites
+;***************************************
+_PCopyRAMSprt:
+	ld              bc, P_CopyRAMSprt
+	ld              de, ParmArea
+	call            PCopy
+	ld              a, (ParmArea)
+
+;***************************************
+;	1FC4	CopyRAMSprt
+;
+; This routine copies data from the RAM sprite attribute
+; table at (8002H) to VRAM.  The RAM sprite index table at
+; (8004H) contains a list of one byte indexes into the RAM
+; sprite attribute table.  Each byte corresponds to one real
+; (VRAM) sprite attr table entry and references one RAM
+; sprite attr table entry to use as a template.
+;
+; ENTRY	A = number of sprites
+;***************************************
+A1C82:
+_CopyRAMSprt:
+	ld              ix, (RAMSprtIdx)  ; Get pointer to RAM sprite index table
+	push            af
+	ld              iy, SprtTabShad   ; Get sprite table base VRAM address
+	ld              e, (iy+0x00)
+	ld              d, (iy+0x01)
+	ld              a, e              ; Send LSB of address
+	out             (IO_VDP_Addr), a
+	ld              a, d
+	or              0x40              ; Set write flag
+	out             (IO_VDP_Addr), a  ; Send MSB of address
+	pop             af
+L1C9A:
+	ld              hl, (RamSprtTab)  ; Get pointer at 8002H
+	ld              c, (ix+0x00)      ; Get next index byte from 8004H table
+	inc             ix
+	ld              b, 0x00           ; HL = (8002H) + (IX)*4
+	add             hl, bc
+	add             hl, bc
+	add             hl, bc
+	add             hl, bc
+	ld              b, 0x04           ; B = count for 4 bytes of data
+	ld              c, IO_VDP_Data    ; C = output port
+L1CAC:
+	outi                              ; Output a byte of data
+	nop                               ; Wait for the VDP to catch up
+	nop
+	jr              nz, L1CAC         ; Loop until 4 bytes copied
+	dec             a
+	jr              nz, L1C9A         ; Loop until all sprites copied
+	ret
+
+.byte   O,O,O,O,O,O
+
+;***************************************
+;	1FA6	PWriteReg
+;
+; Parameter block version of 1FD9
+;
+; Parm 1 (byte) = VDP register number
+; Parm 2 (byte) = data to write to register
+;***************************************
+
+_PWriteReg:
+	ld              bc, P_WriteReg
+	ld              de, ParmArea
+	call            PCopy
+	ld              hl, (ParmArea)
+	ld              c, h
+	ld              b, l
+
+;***************************************
+;	1FD9	WriteReg
+;
+; ENTRY	B = VDP register number
+;	C = data to write to register
+;***************************************
+A1CCA:
+_WriteReg:
+	ld              a, c              ; Send VDP register data
+	out             (IO_VDP_Addr), a
+	ld              a, b
+	add             a, 0x80           ; Set "write register" bit
+	out             (IO_VDP_Addr), a  ; Send register number
+	ld              a, b              ; If register 0...
+	or              a
+	jr              nz, L1CDB
+	ld              a, c
+	ld              (VDP0Shad), a     ;   ...update register 0 shadow
+L1CDB:
+	ld              a, b              ; If register 1...
+	cp              0x01              ; If this is changed to DEC A, Smurf won't work!
+	ret             nz
+	ld              a, c
+	ld              (VDP1Shad), a     ;   ...update register 1 shadow
+	ret
+
+;	Decrement low 4 bits of (HL)
+
+L0190:
+	xor             a
+	rrd
+	sub             0x01
+	push            af
+	rld
+	pop             af
+	ret
+
+;	Decrement high 4 bits of (HL)  (NOT USED!)
+;
+;L019B		XOR	A
+;		RLD
+;		SUB	01H
+;		PUSH	AF
+;		RRD
+;		POP	AF
+;		RET
+
+;***************************************
+;	1FA9	PWrtVRAM
+;
+; Parameter block version of 1FDF
+;
+; Parm 1 (lit)  = pointer to data to be written
+; Parm 2 (word) = VRAM address
+; Parm 3 (word)	= byte count
+;***************************************
+_PWrtVRam:
+	ld              bc, P_WrtVRAM
+	ld              de, ParmArea
+	call            PCopy
+	ld              hl, (ParmArea)
+	ld              de, (ParmArea+2)
+	ld              bc, (ParmArea+4)
+
+;***************************************
+;	1FDF	WrtVRAM
+;
+; ENTRY	HL points to data to be written
+;	DE = VRAM address
+;	BC = byte count (see note)
+; EXIT:	HL = first byte after data that was written
+;	AF, B, D destroyed
+;
+; Note:	there is a bug which causes 256 too few bytes to be
+;	copied if the B and C registers are both non-zero,
+;	and there are games which do depend on this!
+;	BlkWrtVRAM is also affected by this, but is
+;	probably never called with enough bytes to matter.
+;***************************************
+A1D01:
+_WrtVRAM:
+	ld              a, e              ; Send LSB of address
+	out             (IO_VDP_Addr), a
+	ld              a, d
+	add             a, 0x40           ; Send MSB of address + 40H
+	out             (IO_VDP_Addr), a
+	ld              d, b              ; D = MSB of byte count
+	ld              b, c              ; B = LSB of byte count
+	ld              c, IO_VDP_Data    ; C = port address
+L1D14:
+	outi                              ; Output a byte of data
+	nop                               ; Wait for the VDP to catch up
+	nop
+	jr              nz, L1D14         ; LSB loop
+	dec             d                 ; Decrement MSB of count
+	ret             m                 ; MSB loop
+	jr              nz, L1D14         ; BUG: should have been JR L1D14
+	ret
+
+;			HL=msg,IY=len,DE=scrn
+Title_Msgs:
+.word   A144D,22*1024+0x0085          ; first row of COLECOVISION
+.word   A1463,22*1024+0x00A5          ; second row of COLECOVISION
+.word   A14C1,02*1024+0x009B          ; TM
+.word   A14B4,13*1024+0x02AA          ; 'c 1982 COLECO'
+.word   0                             ; End of table
+
+;***************************************
+;	1FAC	PReadVRAM
+;
+; Parameter block version of 1FE2
+;
+; Parm 1 (lit)  = pointer to data buffer
+; Parm 2 (word) = VRAM address
+; Parm 3 (word)	= byte count
+;***************************************
+
+_PReadVRAM:
+	ld              bc, P_ReadVRAM
+	ld              de, ParmArea
+	call            PCopy
+	ld              hl, (ParmArea)
+	ld              de, (ParmArea+2)
+	ld              bc, (ParmArea+4)
+
+;***************************************
+;	1FE2	ReadVRAM
+;
+; ENTRY	HL points to data buffer
+;	DE = VRAM address
+;	BC = byte count (see note)
+; EXIT:	HL = first byte after data that was read
+;	AF, B, D destroyed
+;
+; Note:	there is a bug which causes 256 too few bytes to be
+;	copied if the B and C registers are both non-zero,
+;	and there are games which do depend on this!
+;	BlkReadVRAM is also affected by this, but is
+;	probably never called with enough bytes to matter.
+;***************************************
+A1D3E:
+_ReadVRAM:
+	ld              a, e              ; Send LSB of address
+	out             (IO_VDP_Addr), a
+	ld              a, d              ; Send MSB of address
+.set    A1D43, $+1                    ; (Used by many Coleco carts)
+	out             (IO_VDP_Addr), a
+	ld              d, b              ; D = MSB of byte count
+	ld              b, c              ; B = LSB of byte count
+.set    A1D47, $+1                    ; (Used by many Coleco carts)
+	ld              c, IO_VDP_Data    ; C = port address
+L1D49:
+	ini                               ; Input a byte of data
+	nop                               ; Wait for the VDP to catch up
+	nop
+	jr              nz, L1D49         ; LSB loop
+	dec             d                 ; Decrement MSB of count
+	ret             m                 ; MSB loop
+	jr              nz, L1D49         ; BUG: should have been JR L1D49
+	ret
+
+.byte   O,O,O,O
+
+;***************************************
+;	1FDC	VDP_Status
+;
+; This routine returns the VDP status byte in A.
+;
+; EXIT:	A = VDP status byte
+;***************************************
+A1D57:
+_VDP_Status:
+	in              a, (IO_VDP_Status); Get VDP status
+	ret                               ;     and return
+
+;***************************************
+;	1F6A	FlipRL
+;
+; Right/Left flip a list of images
+;
+; ENTRY	A = VDP table code (0-4)
+;	BC = number of VDP table entries
+;	DE = source VDP table index
+;	HL = destination VDP table index
+;***************************************
+A1D5A:
+_FlipRL:
+	ld              ix, __FlipRL
+	jr              L1D70
+
+;***************************************
+;	1F6D	FlipUD
+;
+; Up/Down flip a list of images
+;
+; ENTRY	A = VDP table code (0-4)
+;	BC = number of VDP table entries
+;	DE = source VDP table index
+;	HL = destination VDP table index
+;***************************************
+A1D60:
+_FlipUD:
+	ld              ix, __FlipUD
+	jr              L1D70
+
+;***************************************
+;	1F70	Rotate
+;
+; Rotate a list of images by 90 degrees clockwise
+;
+; ENTRY	A = VDP table code (0-4)
+;	BC = number of VDP table entries
+;	DE = source VDP table index
+;	HL = destination VDP table index
+;***************************************
+A1D66:
+_Rotate:
+	ld              ix, __Rotate
+	jr              L1D70
+
+;***************************************
+;	1F73	Expand
+;
+; Expand a list of 8x8 images to 16x16
+;
+; ENTRY	A = VDP table code (0-4)
+;	BC = number of VDP table entries
+;	DE = source VDP table index
+;	HL = destination VDP table index
+;***************************************
+_Expand:
+	ld              ix, __Expand
+L1D70:
+	exx                               ; Swap register sets
+	ex              af, af'           ; AF' = VDP table
+	push            ix                ; Save routine address
+L1D74:
+	ex              af, af'           ; AF = VDP table
+	push            af
+	ex              af, af'
+	pop             af
+	exx                               ; DE = original DE
+	push            de
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = (VDP_Temp)
+	call            L1E92             ; LD IY,0001H / JP _BlkReadVRAM
+	pop             ix                ; IX = routine address
+	push            ix
+	jp              (ix)              ; Jump into the routine
+
+__Rotate:
+	ld              hl, (VDP_Temp)    ; HL = temp
+	ld              bc, 0x0008        ; DE = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoRotate          ; Rotate the image
+	call            L1E72             ; Copy the image back to VRAM
+	call            L1E5D             ; Check for hi-res graphics
+	jr              z, L1E02          ; Exit if not hi-res graphics
+	call            L1E89             ; Read the source color table entry
+	call            L1E9A             ; Write the dest color table entry
+L1E02:
+	jr              L1D8CEXX          ; Done with routine
+
+__FlipRL:
+	ld              hl, (VDP_Temp)    ; DE = temp
+	ld              bc, 0x0008        ; HL = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoFlipLR          ; Flip the image
+	call            L1E72             ; Copy the image back to VRAM
+	call            L1E5D             ; Check for hi-res grahpics
+	jr              z, L1DB3          ; Exit if not hi-res graphics
+	call            L1E89             ; Read source color table entry
+	call            L1E9A             ; Write dest color table entry
+L1DB3:
+	exx                               ; Swap register set
+	jr              L1D8CHL           ; Done with routine
+
+__FlipUD:
+	ld              hl, (VDP_Temp)    ; DE = temp
+	ld              bc, 0x0008        ; HL = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoFlipUD          ; Flip the image
+	call            L1E72             ; Copy the image back to VRAM
+	call            L1E5D             ; Check for hi-res graphics
+	jr              z, L1D8CEXX       ; Exit if not hi-res graphics
+	call            L1E89             ; Read source color table entry
+	ld              hl, (VDP_Temp)    ; HL = temp
+	ld              bc, 0x0008        ; DE = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoFlipUD          ; Flip the color table
+	call            L1E9A             ; Write dest color table entry
+L1D8CEXX:
+	exx                               ; Swap register set
+L1D8CHL:
+	inc             hl                ; Increment dest index
+L1D8C:
+	inc             de                ; Increment VDP table index
+	dec             bc                ; Decrement count
+	ld              a, b              ; Check for count = 0
+	or              c
+	exx                               ; Swap register set
+	jr              nz, L1D74         ; Go back until count = 0
+	pop             ix                ; Clean up stack
+	ret
+
+__Expand:
+	ld              hl, (VDP_Temp)    ; HL = temp
+	ld              bc, 0x0008        ; DE = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoExpand          ; Expand the image
+	ex              af, af'           ; A = VDP table code
+	push            af
+	ex              af, af'
+	pop             af
+	exx                               ; DE = dest index
+	push            hl
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = temp + 8
+	ld              bc, 0x0008
+	add             hl, bc
+	ld              iy, 0x0004        ; Write 4 entries
+	call            _BlkWrtVRAM       ;   to the VRAM table
+	call            L1E5D             ; Check for hi-res graphics
+	jr              z, L1E55          ; Exit if not hi-res graphics
+	call            L1E89             ; Read source color table entry
+	ld              hl, (VDP_Temp)    ; HL = temp
+	ld              bc, 0x0008        ; DE = temp + 8
+	ld              e, l
+	ld              d, h
+	add             hl, bc
+	ex              de, hl
+	call            DoExpandCT        ; Expand the color table
+	ld              a, 0x04           ; A = VDP color table code
+	exx                               ; DE = dest index
+	push            hl
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = temp + 8
+	ld              bc, 0x0008
+	add             hl, bc
+	ld              iy, 0x0004        ; Write 4 entries back
+	call            _BlkWrtVRAM
+L1E55:
+	exx                               ; Swap register set
+	inc             hl                ; Increment dest index
+	inc             hl                ;   four times
+	inc             hl                ;
+	jr              L1D8CHL           ; Done with routine
+
+L1E5D:
+	ex              af, af'           ; A = VDP table code
+	push            af
+	ex              af, af'
+	pop             af
+	cp              0x03              ; Pattern generator table?
+	jp              nz, L10E6         ; Return zero if not
+	ld              hl, VDP0Shad      ; Check for hi-res mode
+	xor             a                 ; Prepare to return zero
+	bit             1, (hl)
+	ret             z                 ; Return zero if not
+	inc             a                 ; Return 1 if in hi-res mode
+	ret                               ; (Z-flag set according to A-reg)
+
+L1E72:
+	ex              af, af'           ; A = VDP table code
+	push            af
+	ex              af, af'
+	pop             af
+	exx                               ; DE = dest index
+	push            hl
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = temp + 8
+	ld              bc, 0x0008
+	add             hl, bc
+	jr              L1EA7
+
+L1E89:
+	exx                               ; DE = source index
+	push            de
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = temp
+L1E90:
+	ld              a, 0x04           ; A = VDP color table code
+L1E92:
+	ld              iy, 0x0001        ; Read one entry
+	jp              _BlkReadVRAM      ;   from the color table
+
+L1E9A:
+	exx                               ; DE = dest index
+	push            hl
+	exx
+	pop             de
+	ld              hl, (VDP_Temp)    ; HL = temp
+L1EA5:
+	ld              a, 0x04           ; A = VDP color table code
+L1EA7:
+	ld              iy, 0x0001        ; Write one entry
+	jp              _BlkWrtVRAM       ;   to the color table
+
+DoExpand:
+	push            hl                ; IX = source
+	pop             ix
+	push            de                ; IY = dest
+	pop             iy
+	ld              b, 0x08           ; Initialize count
+L1EB4:
+	ld              a, (ix+0x00)      ; Get source byte
+	inc             ix
+	ld              d, a              ; Copy source byte into D
+	ld              e, 0x04           ; Initialize bit count
+L1EBC:
+	rl              a                 ; Shift source bit into H
+	rl              h
+	rl              d                 ; Shift copy of bit into H
+	rl              h
+	dec             e                 ; Loop for four bits
+	jr              nz, L1EBC
+	ld              e, 0x04           ; Initialize bit count
+L1EC9:
+	rl              a                 ; Shift source bit into L
+	rl              l
+	rl              d                 ; Shift copy of bit into L
+	rl              l
+	dec             e                 ; Loop for four bits
+	jr              nz, L1EC9
+	ld              (iy+0x00), h      ; Store bits in first row
+	ld              (iy+0x10), l
+	inc             iy
+	ld              (iy+0x00), h      ; Store bits in second row
+	ld              (iy+0x10), l
+	inc             iy
+	djnz            L1EB4             ; Loop until done
+	ret
+
+DoExpandCT:
+	ld              b, 0x10           ; Initialize count
+	push            hl                ; Save source addr
+L1EEE:
+	ld              a, (hl)           ; Get next source byte
+	inc             hl
+	ld              (de), a           ; Store it twice
+	inc             de
+	ld              (de), a
+	inc             de
+	dec             bc                ; Decrement count
+	ld              a, b
+	cp              0x08              ; If count = 8
+	jr              nz, L1EFB
+	pop             hl                ;   get back source addr
+L1EFB:
+	djnz            L1EEE             ; Loop until done
+	ret
+
+DoFlipLR:
+	ld              b, 0x08           ; Initialize count
+L1F03:
+	ld              c, (hl)           ; Get next byte
+	ld              a, 0x80           ; Set terminator bit
+L1F06:
+	rl              c                 ; Shift a bit out
+	rra                               ; Shift it in
+	jr              nc, L1F06         ; Loop until done
+	ld              (de), a           ; Save byte
+	inc             hl                ; Point to next bytes
+	inc             de
+	djnz            L1F03             ; Loop until done
+	ret
+
+DoRotate:
+	push            hl                ; IX = source
+	pop             ix
+	ex              de, hl            ; HL = destination
+	ld              b, 0x08           ; Initialize count
+L1F19:
+	rl              (ix+0x00)         ; Shift a column of bits from the
+	rr              (hl)              ;   source into a row of bits in
+	rl              (ix+0x01)         ;   the destination
+	rr              (hl)
+	rl              (ix+0x02)
+	rr              (hl)
+	rl              (ix+0x03)
+	rr              (hl)
+	rl              (ix+0x04)
+	rr              (hl)
+	rl              (ix+0x05)
+	rr              (hl)
+	rl              (ix+0x06)
+	rr              (hl)
+	rl              (ix+0x07)
+	rr              (hl)
+	inc             hl                ; Increment destination
+	djnz            L1F19             ; Loop until done
+	ret
+
+DoFlipUD:
+	ld              bc, 0x0008        ; Dest = dest + 8
+	add             hl, bc
+	ld              b, c              ; Initialize count = 8
+L1F53:
+	dec             hl                ; Decrement source
+	ld              a, (hl)           ; Get source byte
+	ld              (de), a           ; Store in destination
+	inc             de                ; Increment destination
+	djnz            L1F53             ; Loop until done
+	ret
+ 
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O,O
+ .byte              O,O,O,O,O,O,O,O,O
+
+
+; Jump vectors.  Please call these instead of using addresses
+; within the ROM itself.  Since the code is so sloppy that
+; hundreds of bytes can be squeezed out of it, it's too tempting
+; to reassemble an optimized ROM with room to add something cool.
+
+A1F61:
+DoSound:
+	jp              _DoSound
+L1F64:
+	jp              L0488             ; video P04A3
+L1F67:
+	jp              L06C7             ; video P06D8
+FlipRL:
+	jp              _FlipRL
+FlipUD:
+	jp              _FlipUD
+Rotate:
+	jp              _Rotate
+Expand:
+	jp              _Expand
+ReadCtlRaw:
+	jp              _ReadCtlRaw
+ReadCtl:
+	jp              _ReadCtl
+SkillScrn:
+	jp              _SkillScrn
+InitFont:
+	jp              _InitFont
+FillVRAM:
+	jp              _FillVRAM
+InitVDP:
+	jp              _InitVDP
+ReadSpinner:
+	jp              _ReadSpinner
+PBaseLoad:
+	jp              _PBaseLoad
+PBlkReadVRAM:
+	jp              _PBlkReadVRAM
+PBlkWrtVRAM:
+	jp              _PBlkWrtVRAM
+PInitRAMSprt:
+	jp              _PInitRAMSprt
+PCopyRAMSprt:
+	jp              _PCopyRAMSprt
+PInitTimers:
+	jp              _PInitTimers
+PStopTimer:
+	jp              _PStopTimer
+PStartTimer:
+	jp              _PStartTimer
+PTestTimer:
+	jp              _PTestTimer
+PWriteReg:
+	jp              _PWriteReg
+PWrtVRAM:
+	jp              _PWrtVRam
+PReadVRAM:
+	jp              _PReadVRAM
+L1FAF:
+	jp              L0655             ; video P0664
+PInitSound:
+	jp              _PInitSound
+PAddSound:
+	jp              _PAddSound
+BaseLoad:
+	jp              _BaseLoad
+BlkReadVRAM:
+	jp              _BlkReadVRAM
+BlkWrtVRAM:
+	jp              _BlkWrtVRAM
+InitRAMSprt:
+	jp              _InitRAMSprt
+CopyRAMSprt:
+	jp              _CopyRAMSprt
+InitTimers:
+	jp              _InitTimers
+StopTimer:
+	jp              _StopTimer
+StartTimer:
+	jp              _StartTimer
+TestTimer:
+	jp              _TestTimer
+RunTimers:
+	jp              _RunTimers
+NoSound:
+	jp              _NoSound
+WriteReg:
+	jp              _WriteReg
+VDP_Status:
+	jp              _VDP_Status
+WrtVRAM:
+	jp              _WrtVRAM
+ReadVRAM:
+	jp              _ReadVRAM
+L1FE5:
+	jp              L0664             ; video
+L1FE8:
+	jp              L0679             ; video (no P)
+ReadCtlState:
+	jp              _ReadCtlState
+InitSound:
+	jp              _InitSound
+AddSound:
+	jp              _AddSound
+UpdateSound:
+	jp              _UpdateSound
+L1FF7:
+	jp              L04A3             ; video
+L1FFA:
+	jp              L06D8             ; video
+Random:
+	jp              _Random
+
+D2000:

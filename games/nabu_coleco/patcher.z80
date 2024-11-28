@@ -1,0 +1,83 @@
+; ColecoVision ROM patching routines
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+.set patch_table, 0x5000
+
+.section .text, "acrx"
+
+; Applys a list of patches to a ROM in memory
+; Input: IX = patch table
+.global patch
+patch:
+apply_patch:
+	ld     l, (ix+0)
+	ld     h, (ix+1)                        ; Load first word in table (address to patch)
+	ld     a, h
+	or     l
+	jr     z, patch_done                    ; If address == 0 we are done
+	inc    ix
+	inc    ix                               ; Increment pointer to length byte for entry
+	ld     b, (ix+0)                        ; B = number of bytes to patch
+patch_byte:
+	inc    ix                               ; IX = address of first patch byte in current entry
+	ld     a, (ix+0)                        ; A = new value
+	ld     (hl), a                          ; Update ROM with new byte value
+	inc    hl                               ; Increment patch address
+	djnz   patch_byte                       ; Decrement B if not zero patch next byte in entry
+	inc    ix                               ; Move to next entry in patch table
+	jr     apply_patch                      ; Apply next patch to ROM
+patch_done:
+	ret
+
+; Looks up a set of patches based on the crc16 of a rom
+; Inputs:
+;    HL = crc16
+; Output: IX = patch table
+.global lookup_patches
+lookup_patches:
+    ld iy, patch_table
+check_entry:
+    ld a, (iy + 1)
+    or (iy + 0)
+    jr z, no_entry                          ; If address == 0 we are done
+    ld a, (iy + 0)                          ; Compare against low byte of crc16
+    cp l
+    jr nz, next_entry                       ; If they are not equal move on to next entry
+    ld a, (iy + 1)                          ; Compare against high byte of crc16
+    cp h
+    jr nz, next_entry                       ; If they are not equal move on to next entry
+    ld d, (iy + 3)                          ; Load the patch table for current entry in DE
+    ld e, (iy + 2)
+    push de
+    pop ix                                  ; Copy DE to IX
+    ret
+next_entry:
+    inc iy
+    inc iy
+    inc iy
+    inc iy                                  ; Increment IY to point to next table entry
+    jr check_entry                          ; Check next entry in table
+no_entry:
+    ld ix, 0x0000                           ; Return NULL if entry was not found
+    ret

@@ -1,0 +1,281 @@
+; ColecoVision Sound/Controller emulation
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Sound emulation:
+;    Copyright (c) 2008 Muffie
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+.set jump_table, 0x3000                     ; Base address of the jump table for emulation routines
+.set PSG_LATCH, 0x41                        ; AY-3-8910 latch io port
+.set PSG_DATA, 0x40                         ; AY-3-8910 data io port
+
+.section .text, "acrx"
+
+; Joystick/Keypad emulation
+
+; Returns Joystick/Keypad 1 value (IO 0xFF)
+read_joy1:
+    push ix
+    ld ix, joy1_value
+    ld a, (port_toggle)
+    or a
+    jr z, read_joy1_value
+    ld ix, keypad1_value
+read_joy1_value:
+    ld a, (ix + 0)
+    pop ix
+    ret
+
+; Returns Joystick/Keypad 2 value (IO 0xFC)
+read_joy2:
+    push ix
+    ld ix, joy1_value
+    ld a, (port_toggle)
+    or a
+    jr z, read_joy2_value
+    ld ix, keypad1_value
+read_joy2_value:
+    ld a, (ix + 1)
+    pop ix
+    ret
+
+; Switch to reading joystick data (IO 0xC0)
+joy_switch:
+    push af
+    ld a, 0x00
+    ld (port_toggle), a
+    pop af
+    ret
+
+; Switch to reading keypad data (IO 0x80)
+kp_switch:
+    push af
+    ld a, 0x01
+    ld (port_toggle), a
+    pop af
+    ret
+
+; ========================================================================
+;
+;	COLECO SOUND EMULATION - BY MUFFIE 2008
+;
+
+.global init_sound
+init_sound:
+    push af
+    ld a, 7
+    out (PSG_LATCH), a
+    ld a, 0b01111000                        ; sem ruido
+    out (PSG_DATA), a
+
+    ld a, 8
+    out (PSG_LATCH), a                      ; Selecionei registrador 8, volume do canal A , carregado no a  do PSG
+    ld a, 0b00000000                        ;  Modo Fixo, volume ZERO
+    out (PSG_DATA), a                       ; gravei
+
+    ld a, 9
+    out (PSG_LATCH), a                      ; Selecionei registrador 9, volume do canal B , carregado no a  do PSG
+    ld a, 0b00000000                        ;  Modo Fixo, volume ZERO
+    out (PSG_DATA), a                       ; gravei
+
+    ld a, 10
+    out (PSG_LATCH), a                      ; Selecionei registrador 10, volume do canal c , carregado no a  do PSG
+    ld a, 0b00000000                        ;  Modo Fixo, volume ZERO
+    out (PSG_DATA), a                       ; gravei
+
+    pop af
+    ret
+; -----------------------------------------------------------------------
+toca_som_coleco:
+    push af
+    push bc
+    push hl
+    push de
+
+    ld b, a 
+    bit 7, a
+    jr z, ts_dados
+
+ts_registro:
+    ld (latch), a
+    and 0b00010000                          ; SE DER ZERO É FREQUENCIA
+    jr z,ts_frequencia
+ts_volume:                                  ; SENÃO É VOLUME...
+    ld a, b
+    and 0b01100000
+    rrca
+    rrca
+    rrca
+    rrca
+    rrca                                    ; NÚMEROS BONITINHOS: 0 = CANAL 0, 1 = CANAL 1, 2 = CANAL 2 E 3=CANAL RUIDO!
+    ld c, a                                 ; C TEM O CANAL
+    ld a, b
+    and 0b00001111
+    cpl
+    and 0b00001111                          ; VOLUME NO COLECO EH INVERTIDO
+    ld b, a                                 ; B AGORA TEM O VOLUME CERTINHO	
+    ld a, c
+    cp 0b00000011                           ; SERÁ QUE ELE QUER O VOLUME DO RUIDO?
+    jr z, ts_volume_ruido
+    ld a, 8
+    add a, c                                ; PARA PEGAR O REGISTRADOR CERTO PARA O VOLUME DE CADA CANAL
+    out (PSG_LATCH), a
+    ld a, b
+    out (PSG_DATA), a                       ; PRONTO, VOLUME "SETADO"
+    jr ts_fim
+ts_volume_ruido:
+    ld a, b
+    ld (volumec), a                         ; SALVEI O VOLUME DO RUIDO
+    jr ts_fim
+
+ts_frequencia:
+    ld a, b                                 ; O B AQUI AINDA TEM O LATCH FULL
+    and 0b01100000                          ; SERÁ QUE ELE QUER RUIDO?
+    cp 0b01100000
+    jr z, ts_freq_ruido
+    ld a, b
+    and 0b00001111                          ; SEPAREI OS BITS DA PARTE DE BAIXO DA FREQUENCIA
+    ld (freqlow), a                         ; ACABO DE GRAVAR NA "MINI-RAM" DO EMULADOR DE SOM...
+    jr ts_fim
+
+ts_freq_ruido:
+    ld a, b
+    and 0b00000011
+    cp 0b00000011
+    jr z, ts_seta_flag
+    ld a, 0b00000000
+    ld (flagnoise), a                       ; DESLIGA FLAG
+    jr ts_fim
+ts_seta_flag:
+    ld a, 0b10000000
+    ld (flagnoise), a                       ; LIGA FLAG
+    jr ts_fim
+
+ts_fim:
+    pop de
+    pop hl
+    pop bc
+    pop af
+    ret
+
+
+ts_dados:
+    and 0b00111111
+    rlca
+    rlca
+    rlca
+    rlca
+    and 0b11110000
+    ld hl, freqlow
+    ld c, (hl)
+    add a, c                                ; 8 PRIMEIROS BITS DA FREQUENCIA ESTAO EM A
+;   rlca                                    ; MULTIPLIQUEI POR 2
+
+    ld c, a                                 ; B TEM O LATCH ORIGINAL (DADOS) E C TEM OS 8 BITS DA FREQUENCIA DO TOM
+    ld a, (latch)
+    and 0b01100000
+    rrca
+    rrca
+    rrca
+    rrca
+    ld d, a                                 ; BEM, AGORA D TEM O CANAL * 2, OU SEJA 0=0, 1=2 E 2=4 (REGISTRADORES)
+
+    out (PSG_LATCH), a                      ; 0 OU 2 OU 4
+    ld a, c
+    out (PSG_DATA), a                       ; GRAVEI, AGORA LIBEREI O C
+    inc d                                   ; D JAH APONTA PARA O REGISTRO DOS  BITS MAIS SIGNIFICATIVOS DA FREQUENCIA: 1, 3 OU 4
+    ld a, b
+    ld b, c                                 ; ATÉ AQUI: B = 8 BITS MENOS SIGNIFICATIVOS, C = LIVRE, D = REGISTRADORES DOS BITS MAIS SIGNIFICATIVOS
+    and 0b00111111
+    rrca
+    rrca
+    rrca
+    rrca
+    and 0b00000111
+    ld c, a
+    ld a, d
+    out (PSG_LATCH), a
+    ld a, c
+    out (PSG_DATA), a                       ; PRONTO, REG 1,3 OU 4 JAH TEM A PARTE MAIS SIGNIFICATIVOS.
+
+    ld a, (flagnoise)
+    dec d                                   ; D TEM DE NOVO O CANAL * 2 (00,01 OU 10)
+    add a, d
+    cp 0b10000100                           ; 1o BIT INDICA O FLAG, O 10 NO FINAL INDICA O CANAL 2
+    jr nz, ts_fim                           ; SE NÃO FOR, NÃO FAÇO MAIS NADA...
+
+    ; RUIDO SIMULADO NO TOM MESMO...
+    ; EM TEORIA BASTA SETAR O VOLUME DO CANAL CORRETO AGORA
+    ld a, (volumec)
+    cp 0b00000000                           ; se o ruido do C for zero, basta ignorar.
+    jr z, ts_fim                            ; senão, o cara ta tentando fazer ruido...
+    ld b, a
+    ld a, 10
+    out (PSG_LATCH), a
+    ld a, b
+    out (PSG_DATA), a
+    jr ts_fim
+
+; ========================================================================
+
+.global install_emulation_vectors
+install_emulation_vectors:
+    ld ix, jump_table                       ; Jump table base offset
+    ld a, 0xc3                              ; Jump instruction
+
+    ld (ix + 0), a                          ; Write jump to entry 0
+    ld de, kp_switch                        ; Address of kp_switch
+    ld (ix + 1), e                          ; Write low byte
+    ld (ix + 2), d                          ; Write high byte
+
+    ld (ix + 3), a                          ; Write jump to entry 1
+    ld de, joy_switch                       ; Address of joy_switch
+    ld (ix + 4), e                          ; Write low byte
+    ld (ix + 5), d                          ; Write high byte
+
+    ld (ix + 6), a                          ; Write jump to entry 2
+    ld de, read_joy1                        ; Address of read_joy1
+    ld (ix + 7), e                          ; Write low byte
+    ld (ix + 8), d                          ; Write high byte
+
+    ld (ix + 9), a                          ; Write jump to entry 3
+    ld de, read_joy2                        ; Address of read_joy2
+    ld (ix + 10), e                         ; Write low byte
+    ld (ix + 11), d                         ; Write high byte
+
+    ld (ix + 12), a                         ; Write jump to entry 4
+    ld de, toca_som_coleco                  ; Address of toca_som_coleco
+    ld (ix + 13), e                         ; Write low byte
+    ld (ix + 14), d                         ; Write high byte
+
+    ret
+
+.section .data, "adrw"
+
+port_toggle: .byte 0                        ; Toggles Joystick/Keypad read
+
+latch: .byte 0x00                           ; tenho que gravar a porra do ultimo latch...
+freqlow: .byte 0x00                         ; PARTE BAIXA DO SOM
+flagnoise: .byte 0x00                       ; PARA QUANDO O COLECO COLOCA O NOISE CHUPINHANDO CANAL 2
+volumec: .byte 0x00                         ; TENHO QUE GUARDAR O VOLUME DO CANAL C
+

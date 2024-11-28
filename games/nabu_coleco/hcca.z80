@@ -1,0 +1,293 @@
+; HCCA Pack Request routines
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+; Sets the status callback to be used with HCCA pack requests
+; Input: HL = Address of callback
+.global set_hcca_status_callback
+set_hcca_status_callback:
+    ld (status_callback), hl                ; Store callback address
+    ret
+
+; Calls the status callback if set
+.global hcca_status_callback
+hcca_status_callback:
+    push hl                                 ; Save HL
+    ld hl, (status_callback)                ; HL = callback address
+    ld a, l
+    or h                                    ; Is HL 0?
+    jr z, no_callback                       ; If yes then exit
+    ex (sp), hl                             ; Restore HL and put address of callback on stack
+    ret                                     ; Jump to callback
+no_callback:
+    pop hl                                  ; Restore HL
+    ret
+
+; Send a single byte to the HCCA with interrupt-based confirmation
+; Input: A = Byte to send
+; Returns: Carry Flag = Set if timeout occurs, Clear if successful
+; Modifies: C
+.global send_hcca_byte
+send_hcca_byte:
+    push af                                 ; Save A (byte to send)
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+
+    ld a, 0x0F                              ; Port B register
+    out (0x41), a                           ; Select IO Port B
+
+    ; Wait for the HCCA TX interrupt (TX buffer empty)
+    ld de, 0x0000                           ; Set timeout (Inner Loop)
+    ld b, 0x10                              ; Set timeout (Outer Loop)
+wait_tx_ready:
+    in a, (0x40)                            ; Read IO Port B status
+    bit 0, a                                ; Check Interrupt Request (Bit 0)
+    jr z, tx_ready_decrement                ; If not set, decrement counter and check timeout
+
+    ; Check if this is the HCCA TX interrupt (Interrupt Number = 6, value = 2)
+    and 0b00001110                          ; Mask Interrupt Number bits (3-1)
+    cp 2                                    ; Compare to Interrupt Number 6 (value = 2)
+    jr nz, tx_ready_decrement               ; If not HCCA TX, continue waiting
+
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    pop af                                  ; Restore A (byte to send)
+    out (0x80), a                           ; Send the byte to HCCA
+    xor a                                   ; Clear Carry Flag to indicate success
+    ret
+
+tx_ready_decrement:
+    dec de                                  ; Decrement DE
+    ld a, d
+    or e
+    jr nz, wait_tx_ready                    ; If inner loop not zero, keep waiting
+    djnz wait_tx_ready                      ; If outer loop not zero, keep waiting
+
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    pop af                                  ; Restore A
+    scf                                     ; Set Carry Flag to indicate timeout
+    ret
+
+; Read a single byte response from the HCCA RX interrupt with timeout
+; Returns:
+;   A = Response byte from HCCA (on success) or undefined if timeout occurs
+;   Carry Flag = Set if timeout occurs, Clear if successful
+; Modifies: C
+.global read_hcca_byte
+read_hcca_byte:
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+
+    ld a, 0x0F                              ; Port B register
+    out (0x41), a                           ; Select IO Port B
+
+    ld de, 0x0000                           ; Set timeout (Inner Loop)
+    ld b, 0x10                              ; Set timeout (Outer Loop)
+wait_rx_ready:
+    ; Check Interrupt Request Bit (Bit 0)
+    in a, (0x40)                            ; Read IO Port B status
+    bit 0, a                                ; Check Interrupt Request (Bit 0)
+    jr z, rx_ready_decrement                ; If not set, decrement counter and check timeout
+
+    ; Check if this is the HCCA RX interrupt (Interrupt Number = 7, value = 0)
+    and 0b00001110                          ; Mask Interrupt Number bits (3-1)
+    cp 0                                    ; Compare to Interrupt Number 7 (value = 0)
+    jr nz, rx_ready_decrement               ; If not HCCA RX, decrement counter and check timeout
+
+    ; Read the response byte from HCCA data port
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    xor a                                   ; Clear Carry Flag to indicate success
+    in a, (0x80)                            ; Read data from HCCA data port
+    ret                                     ; Return with the response in A
+
+rx_ready_decrement:
+    dec de                                  ; Decrement DE
+    ld a, d
+    or e
+    jr nz, wait_rx_ready                    ; If inner loop not zero, keep waiting
+    djnz wait_rx_ready                      ; If outer loop not zero, keep waiting
+
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    scf                                     ; Set Carry Flag to indicate timeout
+    ret
+
+; Request a pack from the HCCA and load it into memory
+; Input:
+;   HL = 16-bit pack number (MSB-first in memory, LSB sent first)
+;   DE = Address in memory to load the pack data
+; Returns:
+;   Carry Flag = Set if an error occurs, Clear if successful
+;   DE = Updated to the end of the loaded pack in memory
+; Modifies: BC, A
+.global request_pack
+request_pack:
+    push hl                                 ; Save HL
+
+    xor a                                   ; Start with segment 0
+    ld (segment_number), a
+
+request_next_segment:
+    ld a, 0x84                              ; Step 1: Send RequestPack Command (0x84)
+    call send_hcca_byte                     ; Send command
+    jr c, request_failed                    ; If timeout, fail
+
+    ; Step 2: Wait for Response (0x10 0x06)
+    call read_hcca_byte                     ; Wait for the first byte
+    jr c, request_failed                    ; If timeout, fail
+    cp 0x10
+    jr nz, request_failed                   ; If first byte is incorrect, fail
+
+    call read_hcca_byte                     ; Wait for the second byte
+    jr c, request_failed                    ; If timeout, fail
+    cp 0x06
+    jr nz, request_failed                   ; If second byte is incorrect, fail
+
+    ; Step 3: Send Segment Number
+    ld a, (segment_number)                  ; Load segment number
+    call send_hcca_byte                     ; Send segment number
+    jr c, request_failed                    ; If timeout, fail
+
+    ; Step 4: Send Pack Number (convert HL into LSB-first format)
+    ld a, l                                 ; LSB of pack number
+    call send_hcca_byte                     ; Send LSB
+    jr c, request_failed                    ; If timeout, fail
+    ld a, h                                 ; MSB of pack number
+    call send_hcca_byte                     ; Send MSB
+    jr c, request_failed                    ; If timeout, fail
+    xor a                                   ; Our pack numbers are only 16 bits, so always send 0
+    call send_hcca_byte                     ; Send fixed byte
+    jr c, request_failed ; If timeout, fail
+
+    ; Step 5: Wait for Authorization Response (0xE4 <value>)
+    call read_hcca_byte                     ; Wait for the first byte (0xE4)
+    jr c, request_failed                    ; If timeout, fail
+    cp 0xE4
+    jr nz, request_failed                   ; If response is incorrect, fail
+
+    call read_hcca_byte                     ; Wait for the second byte (aurhorization value)
+    jr c, request_failed                    ; If timeout, fail
+    cp 0x91
+    jr nz, request_failed                   ; If not authorized, fail
+
+    ; Step 6: Send Acknowledgment (0x10 0x06)
+    ld a, 0x10
+    call send_hcca_byte
+    jr c, request_failed                    ; If timeout, fail
+    ld a, 0x06
+    call send_hcca_byte
+    jr c, request_failed                    ; If timeout, fail
+
+    ; Step 7: Receive Pack Data
+    call receive_pack_data                  ; Receive a segment of the pack
+    jr c, request_failed                    ; If Carry Flag is set, fail (error occurred)
+    jr z, increment_segment                 ; If Zero Flag is set, increment segment
+
+request_complete:
+    call hcca_status_callback               ; Call status callback
+    ld hl, segment_buffer + 0x10            ; HL = segment payload
+    ldir                                    ; Copy segment buffer (minus header) to destination
+    xor a                                   ; Clear Carry Flag to indicate success
+    pop hl                                  ; Restore HL
+    ret
+    
+increment_segment:
+    call hcca_status_callback               ; Call status callback
+    push hl                                 ; Save HL
+    ld hl, segment_number
+    inc (hl)                                ; Increment segment number
+    ld hl, segment_buffer + 0x10            ; HL = segment payload
+    ldir                                    ; Copy segment buffer (minus header) to destination
+    pop hl                                  ; Restore HL
+    jr request_next_segment                 ; Request our next segment
+
+request_failed:
+    scf                                     ; Set Carry Flag to indicate error
+    pop hl                                  ; Restore HL
+    ret
+
+; Receive and process a segment of pack data
+; Modifies: DE (updated with the end of the loaded data)
+; Preserves: HL
+; Returns:
+;   BC = Payload size
+;   Z = Set if this is NOT the last segment
+;   Z = Clear if this IS the last segment
+;   Carry Flag = Set if an error occurs, Clear if successful
+.global receive_pack_data
+receive_pack_data:
+    push hl                                 ; Save HL
+
+    ld bc, 0x0000                           ; Set byte counter to 0
+    ld hl, segment_buffer                   ; Set address of segment buffer
+receive_payload_loop:
+    call read_hcca_byte                     ; Read a byte from HCCA
+    jr c, receive_error                     ; If timeout, fail
+    cp 0x10                                 ; Check for escape character or end marker
+    jr z, handle_escape_or_end
+
+store_byte:
+    ld (hl), a                              ; Store the byte in memory
+    inc hl                                  ; Advance to the next address
+    inc bc                                  ; Increment byte counter
+    jr receive_payload_loop                 ; Continue reading payload
+
+handle_escape_or_end:
+    call read_hcca_byte                     ; Read the next byte
+    jr c, receive_error                     ; If timeout, fail
+    cp 0x10                                 ; Check if this is an escaped 0x10
+    jr z, store_byte                        ; If escaped, store the byte and continue
+    cp 0xE1                                 ; Check for end-of-segment marker
+    jr nz, receive_error                    ; If not, error
+
+    ; Correct payload size by subtracting 18 from BC (header + crc)
+    ld a, c
+    sub 0x12
+    ld c, a
+    ld a, b
+    sbc 0x00
+    ld b, a
+
+    ld a, (segment_buffer + 11)             ; Retrieve last segment flag from memory
+    and 0x10                                ; Clear Carry Flag, set Zero Flag if A is zero
+    pop hl                                  ; Restore HL
+    ret
+
+receive_error:
+    scf                                     ; Set Carry Flag to indicate error
+    pop hl                                  ; Restore HL
+    ret
+
+; Called everytime a new seqment of the pack is requested
+status_callback:
+     .word 0
+
+; Temporary buffer segment
+segment_buffer:
+    .space 1024,0
+
+; Memory location to store the current segment number
+segment_number:
+    .byte 0

@@ -1,0 +1,304 @@
+; VDP routines
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+; Define constants
+.set VDP_DATA, 0xA0                         ; Data port
+.set VDP_COMMAND, 0xA1                      ; Command port
+.set NAME_TABLE, 0x1800                     ; Base address for the text screen
+.set PATTERN_TABLE, 0x0000                  ; Base address for the pattern generator table
+
+.section .text, "acrx"
+
+; Initialize TMS9918 in text mode
+.global init_tms9918
+init_tms9918:
+    ld hl, vdp_registers                    ; Point to the start of the register values
+    ld b, 0                                 ; Start with register 0
+init_loop:
+    ld a, (hl)                              ; Load the value for the current register
+    inc hl                                  ; Move to the next value
+    ld c, b                                 ; Current register number in B
+    call write_vdp_register                 ; Write the value to the VDP register
+    inc b                                   ; Increment register number
+    ld  a, b
+    cp 8                                    ; Check if all 8 registers are written
+    jr nz, init_loop                        ; Continue looping if not done
+
+    ; Load font table into pattern generator VRAM
+    ld hl, font_table                       ; Point to the font table in memory
+    ld de, PATTERN_TABLE + 256              ; Start address of the pattern generator table in VRAM (skip first 32)
+    ld bc, 768                              ; 768 bytes for 96 characters (8 bytes each)
+    call load_vram                          ; Write font table to VRAM
+
+    ; Clear the screen
+    call clear_screen
+
+    ret
+
+; Clear the entire screen by filling it with spaces
+.global clear_screen
+clear_screen:
+    ld hl, NAME_TABLE                       ; Start address of the name table
+    call set_vdp_write_address              ; Set VRAM write address once at the start
+    ld bc, 24 * 40                          ; Total number of characters (24 rows × 40 columns)
+clear_screen_loop:
+    ld a, ' '                               ; Load space character
+    out (VDP_DATA), a                       ; Write space to VRAM
+    dec bc                                  ; Decrement character count
+    ld a, b
+    or c                                    ; Check if BC is zero
+    jr nz, clear_screen_loop                ; Continue until all characters are written
+    ret
+
+; Scroll the screen up by one row, clearing the last row
+scroll_screen:
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+    push hl                                 ; Save HL
+
+    ld hl, NAME_TABLE                       ; Start of the name table (first row)
+    ld de, NAME_TABLE + 40                  ; Start of the second row
+    ld bc, 23 * 40                          ; Total number of characters to scroll (23 rows × 40 columns)
+scroll_loop:
+    ; Set VRAM read address (source)
+    ex de, hl                               ; Swap DE into HL
+    call set_vdp_read_address               ; Set VRAM address for reading
+    ex de, hl                               ; Restore DE
+    in a, (VDP_DATA)                        ; Read character from VRAM
+
+    ; Set VRAM write address (destination)
+    call set_vdp_write_address              ; Use HL (destination address)
+    out (VDP_DATA), a                       ; Write character to VRAM
+
+    inc hl                                  ; Increment destination address
+    inc de                                  ; Increment source address
+    dec bc                                  ; Decrement byte counter
+    ld a, b
+    or c                                    ; Check if BC is zero
+    jr nz, scroll_loop                      ; Continue until all rows are scrolled
+
+; Clear the last row with spaces
+clear_last_row:
+    ld hl, NAME_TABLE + (23 * 40)           ; Start of the last row
+    call set_vdp_write_address              ; Set VRAM address once at the start
+    ld b, 40                                ; 40 characters per row
+clear_last_row_loop:
+    ld a, ' '                               ; Load space character
+    out (VDP_DATA), a                       ; Write space to VRAM
+    dec b                                   ; Decrement column count
+    jr nz, clear_last_row_loop              ; Continue until the row is filled
+
+    pop hl                                  ; Restore HL
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    ret
+
+; Set VRAM write address
+; Input: HL = Address in VRAM
+set_vdp_write_address:
+    push af                                 ; Save AF
+    ld a, l                                 ; Low byte of address
+    out (VDP_COMMAND), a                    ; Write low byte to command port
+    ld a, h                                 ; High byte of address
+    or 0x40                                 ; Set bit 6 for write operation
+    out (VDP_COMMAND), a                    ; Write high byte to command port
+    pop af                                  ; Restore AF
+    ret
+
+; Set VRAM read address
+; Input: HL = Address in VRAM
+set_vdp_read_address:
+    push af                                 ; Save AF
+    ld a, l                                 ; Low byte of address
+    out (VDP_COMMAND), a                    ; Write low byte to command port
+    ld a, h                                 ; High byte of address
+    out (VDP_COMMAND), a                    ; Write high byte to command port (no bit 6 set)
+    pop af                                  ; Restore AF
+    ret
+
+; Write a byte to a VDP register
+; Input: A = Value to write
+;        C = Register number (0-7)
+write_vdp_register:
+    out (VDP_COMMAND), a                    ; Write value to command port
+    ld a, c                                 ; Load register number
+    or 0x80                                 ; Set bit 7 to indicate register write
+    out (VDP_COMMAND), a                    ; Write register number with bit 7 set
+    ret
+
+; Print a character to the screen
+; Input: A = Character to print
+.global print_char
+print_char:
+    cp 0x0A                                 ; Check for linefeed (LF)
+    jr z, handle_linefeed
+    cp 0x0D                                 ; Check for carriage return (CR)
+    jr z, handle_carriage_return
+
+    push bc                                 ; Save BC
+    push hl                                 ; Save HL
+
+    ; Regular character printing
+    push af                                 ; Save the character being printed
+    ld a, (cursor_row)                      ; Load stored row into A
+    ld b, a                                 ; Transfer to B
+    ld a, (cursor_col)                      ; Load stored column into A
+    ld c, a                                 ; Transfer to C
+    call calc_vram_address                  ; Calculate VRAM address for cursor position
+    call set_vdp_write_address              ; Set VRAM address
+    pop af                                  ; Restore the character
+    out (VDP_DATA), a                       ; Write character to VRAM
+    inc c                                   ; Move cursor column
+    ld a, c
+    cp 40                                   ; Check if column exceeds screen width
+    jr nz, print_char_done
+    ld c, 0                                 ; Reset column to 0
+    inc b                                   ; Move to the next row
+    ld a, b                                 ; Load current row for comparison
+    cp 24                                   ; Check if row exceeds screen height
+    jr nz, print_char_done                  ; Jump to store updated values
+    call scroll_screen                      ; Scroll the screen if necessary
+    ld b, 23                                ; Keep cursor on the last row
+    ld c, 0                                 ; Reset column to 0 after scrolling
+print_char_done:
+    ld a, c                                 ; Move updated column into A
+    ld (cursor_col), a                      ; Store updated column
+    ld a, b                                 ; Move updated row into A
+    ld (cursor_row), a                      ; Store updated row
+
+    pop hl                                  ; Restore HL
+    pop bc                                  ; Restore BC
+    ret
+
+; Handle linefeed (LF)
+handle_linefeed:
+    ld a, (cursor_row)                      ; Load current row
+    inc a                                   ; Move to the next row
+    cp 24                                   ; Check if row exceeds screen height
+    jr nz, handle_linefeed_done             ; Continue if within bounds
+    call scroll_screen                      ; Scroll the screen if necessary
+    ld a, 23                                ; Keep cursor on the last row
+handle_linefeed_done:
+    ld (cursor_row), a                      ; Store updated row
+    ret
+
+; Handle carriage return (CR)
+handle_carriage_return:
+    ld a, 0                                 ; Reset column to the beginning
+    ld (cursor_col), a                      ; Store updated column
+    ret
+
+; Calculate VRAM address
+; Input: B = Row (0-23), C = Column (0-39)
+; Output: HL = VRAM address
+calc_vram_address:
+    push de                                 ; Save DE
+
+    ld hl, row_addresses                    ; Base address of the row lookup table
+    ld a, b                                 ; Load row index (B)
+    add a, a                                ; Multiply by 2 (each address is 2 bytes)
+    ld e, a                                 ; Offset low byte
+    ld d, 0                                 ; Offset high byte
+    add hl, de                              ; Point HL to the correct row address
+    ld e, (hl)                              ; Load low byte of row address
+    inc hl                                  ; Move to high byte
+    ld d, (hl)                              ; Load high byte of row address
+    ex de, hl                               ; Place row address from DE into HL
+    ld a, c                                 ; Load column (C)
+    add a, l                                ; Add column offset to low byte
+    ld l, a                                 ; Update low byte
+    adc a, h                                ; Add carry to high byte
+    sub l                                   ; Correct carry propagation
+    ld h, a                                 ; Update high byte
+
+    pop de                                  ; Restore DE
+    ret
+
+; Load data into VRAM
+; Input: HL = Source address in RAM
+;        DE = Destination address in VRAM
+;        BC = Number of bytes to transfer
+load_vram:
+    ex de, hl                               ; Swap DE into HL for setting VRAM address
+    call set_vdp_write_address              ; Set VRAM write address to HL (original DE)
+    ex de, hl                               ; Restore HL and DE to original values
+load_vram_loop:
+    ld a, (hl)                              ; Load byte from RAM
+    out (VDP_DATA), a                       ; Write byte to VRAM
+    inc hl                                  ; Increment RAM address
+    dec bc                                  ; Decrement byte count
+    ld a, b
+    or c                                    ; Check if BC is zero
+    jr nz, load_vram_loop                   ; Continue until all bytes are written
+    ret
+
+; Print a null-terminated string
+; Input: DE = Address of the string in RAM
+.global print_string
+print_string:
+    ld a, (de)                              ; Load the first character
+    or a                                    ; Check for null terminator
+    jr z, print_string_done
+    push de                                 ; Save DE pointer
+    call print_char                         ; Print the character
+    pop de                                  ; Restore DE pointer
+    inc de                                  ; Move to the next character
+    jr print_string                         ; Repeat for the next character
+print_string_done:
+    ret
+
+; Update cursor position
+; Input: B = Row (0-23), C = Column (0-39)
+.global set_cursor
+set_cursor:
+    ld a, b                                 ; Load row into A
+    ld (cursor_row), a                      ; Store current row
+    ld a, c                                 ; Load column into A
+    ld (cursor_col), a                      ; Store current column
+    ret
+
+.section .data, "adrw"
+
+cursor_row:   .byte 0                       ; Storage for the current row
+cursor_col:   .byte 0                       ; Storage for the current column
+
+row_addresses:
+    .word NAME_TABLE + 0x000, NAME_TABLE + 0x028, NAME_TABLE + 0x050, NAME_TABLE + 0x078, NAME_TABLE + 0x0A0, NAME_TABLE + 0x0C8
+    .word NAME_TABLE + 0x0F0, NAME_TABLE + 0x118, NAME_TABLE + 0x140, NAME_TABLE + 0x168, NAME_TABLE + 0x190, NAME_TABLE + 0x1B8
+    .word NAME_TABLE + 0x1E0, NAME_TABLE + 0x208, NAME_TABLE + 0x230, NAME_TABLE + 0x258, NAME_TABLE + 0x280, NAME_TABLE + 0x2A8
+    .word NAME_TABLE + 0x2D0, NAME_TABLE + 0x2F8, NAME_TABLE + 0x320, NAME_TABLE + 0x348, NAME_TABLE + 0x370, NAME_TABLE + 0x398
+
+vdp_registers:
+    .byte 0x00                              ; Register 0: Text mode selected
+    .byte 0xD0                              ; Register 1: Text mode, enable display, disable interrupts, use 4116 DRAM
+    .byte (NAME_TABLE >> 10)                ; Register 2: Name table address divided by 0x400
+    .byte 0x00                              ; Register 3: (Not used in text mode)
+    .byte (PATTERN_TABLE >> 11)             ; Register 4: Pattern generator table address divided by 0x800
+    .byte 0x00                              ; Register 5: (Not used in text mode)
+    .byte 0x00                              ; Register 6: (Not used in text mode)
+    .byte 0xF1                              ; Register 7: Foreground and background colors
+
+; Font data taken from z88dk
+font_table:
+    .incbin "font_8x8_einstein_system.bin"

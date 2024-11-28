@@ -1,0 +1,188 @@
+; ColecoVision ROM Loader
+;
+; Copyright (c) 2024 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+.section .crt0, "acrx"
+
+    nop
+    nop
+    nop
+entry:
+    di                                      ; Ensure interrupts are disabled
+    ld sp, 0x73b9                           ; Setup stack out of the way
+
+    ; Relocate code to address 0x2100
+    ld hl, reloc_end - 1
+    ld de, 0x2100 + reloc_length - 1
+    ld bc, reloc_length
+    lddr
+
+    jp main                                 ; Jump to relocated main program
+
+.section .text, "acrx"
+main:
+    call install_interrupt_handlers         ; Install default interrupt handlers
+    call install_emulation_vectors          ; Install vector for sound and joystuick emulation
+    call init_tms9918                       ; Initialize the VDP
+    call init_sound                         ; Initialize sound emulation
+    ld bc, 0x0008                           ; Row = 0, Column = 8
+    call set_cursor                         ; Set Cursor
+    ld de, banner
+    call print_string                       ; Print banner
+    ld bc, 0x010C                           ; Row = 1, Column = 12
+    call set_cursor                         ; Set Cursor
+    ld de, byline
+    call print_string                       ; Print byline
+    ld bc, 0x0300                           ; Row = 3, Column = 0
+    call set_cursor                         ; Set Cursor
+    ld de, bios_msg
+    call print_string                       ; Print loading bios message
+    ld a, 0xc0                              ; C = INTERRUPT_HCCA_RX | INTERRUPT_HCCA_TX
+    call enable_interrupts                  ; Enable HCCA interrupt generation
+    ld hl, print_dot                        ; HL = print_dot function
+    call set_hcca_status_callback           ; Status callback for hcca pack request
+    ld hl, 0x0002
+    ld de, 0x0000
+    call request_pack                       ; Request pack 2 (bios) and load at address 0x0000
+    jr c, no_bios
+    ld bc, 0x0400                           ; Row = 4, Column = 0
+    call set_cursor                         ; Set Cursor
+    ld de, patch_msg
+    call print_string                       ; Print loading patches message
+    xor a
+    ld (patches_loaded), a                  ; Flag that marks patch load operation as sucessfull
+    ld hl, 0x0003
+    ld de, 0x5000
+    call request_pack                       ; Request pack 3 (patches) and load at address 0x5000
+    jr c, skip_patches                      ; Check if we successfully loaded the patches pak
+    ld a, 1
+    ld (patches_loaded), a                  ; Mark patches as loaded
+skip_patches:
+    ld bc, 0x0500                           ; Row = 5, Column = 0
+    call set_cursor                         ; Set Cursor
+    ld de, rom_msg
+    call print_string                       ; Print loading rom message
+    ld hl, 0x0004
+    ld de, 0x8000
+    call request_pack                       ; Request pack 4 (ROM) and load at address 0x8000
+    push af                                 ; Save Flags
+    ld a, 0xc0                              ; C = INTERRUPT_HCCA_RX | INTERRUPT_HCCA_TX
+    call disable_interrupts                 ; Disable HCCA interrupt generation
+    pop af                                  ; Restore Flags
+    jr c, start_rom                         ; Jump straight to BIOS if ROM was not loaded
+
+    ld a, (patches_loaded)
+    or a
+    jr z, start_rom                         ; Skip apply patches if patches pak failed to load
+    ; Calculates length of ROM (start address - end address)
+    ld hl, 0x8000
+    ex de, hl
+    sbc hl, de
+
+    ld b, h
+    ld c, l
+    call crc16                              ; Calculate ROM CRC16
+    call lookup_patches                     ; Look up patch table based on crc16
+    ld a, ixh
+    or ixl
+    jr z, start_rom                         ; If no patch tabble found, skip apply patches
+    call patch                              ; Apply patches to ROM
+start_rom:
+    ld a, 0x03
+    out (0x00), a                           ; Disable NABU bios
+
+    jp 0x0000                               ; Jump to the beginning of the coleco bios
+
+no_bios:                                    ; BIOS pak not found, print message and halt
+    ld bc, 0x050A                           ; Row = 5, Column = 10
+    call set_cursor                         ; Set Cursor
+    ld de, bios_failed_msg
+    call print_string                       ; Print failure message
+halt_loop:
+    jp halt_loop                            ; Halt
+
+
+; Callback to print a dot for every segment of a pack
+print_dot:
+    ld a, '.'
+    call print_char                         ; Print '.'
+    ret
+
+; Calculates CRC16 for a block of data
+; Inputs:
+;   DE = Address of the data block
+;   BC = Number of bytes in the data block
+; Output:
+;   HL = Calculated CRC16 value
+crc16:
+    push bc
+    push de
+    push af
+    ld hl, 0xFFFF
+    push bc
+crc16_read:
+    ld a, (de)
+    inc de
+    xor h
+    ld h, a
+    ld b, 8
+crc16_crcbyte:
+    add hl, hl
+    jr nc, crc16_next
+    ld a, h
+    xor 0x10
+    ld h, a
+    ld a, l
+    xor 0x21
+    ld l, a
+crc16_next:
+    djnz crc16_crcbyte
+    pop bc
+    dec bc
+    push bc
+    ld a, b
+    or c
+    jr nz, crc16_read
+    pop bc
+    pop af
+    pop de
+    pop bc
+    ret
+
+.section .data, "adrw"
+
+banner:
+    .byte "ColecoVision ROM Loader", 0
+byline:
+    .byte "By Brian Johnson", 0
+bios_msg:
+    .byte "Loading BIOS ", 0
+bios_failed_msg:
+    .byte "Failed to load BIOS", 0
+patch_msg:
+    .byte "Loading Patches ", 0
+rom_msg:
+    .byte "Loading ROM ", 0
+
+patches_loaded:
+    .byte 0

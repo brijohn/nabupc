@@ -1,0 +1,182 @@
+; List of patches for games that need them.
+
+.section .data, "adrw"
+
+patchset:
+    .word 0x3e76                            ; Tutankham CRC
+    .word tutankham_patches
+    .word 0xf95f                            ; Montezuma's Revenge CRC
+    .word montezuma_patches
+    .word 0xb3b2                            ; Jumpman Jr CRC
+    .word jumpmanjr_patches
+    .word 0x4f44                            ; Ladybug CRC
+    .word ladybug_patches
+    .word 0x2a56                            ; Pitfall CRC
+    .word pitfall_patches
+    .word 0
+
+tutankham_patches:
+    ; Patch RST 0x30 vector for sound emulation
+    .word 0x801b
+    .byte 3, 0xc3
+    .word 0x300c
+
+    ; Patch RST 0x28 vector for joy_switch
+    .word 0x8018
+    .byte 3, 0xc3
+    .word 0x3003
+
+    ; Patch in joy_switch emulation
+    .word 0x82c8
+    .byte 2, 0xef, 0x00
+
+    ; Patch in sound emulation
+    .word 0x8ffd
+    .byte 2, 0xf7, 0x00
+
+    .word 0x9008
+    .byte 2, 0xf7, 0x00
+
+    .word 0x9010
+    .byte 2, 0xf7, 0x00
+
+    .word 0x901b
+    .byte 2, 0xf7, 0x00
+
+    .word 0x9027
+    .byte 2, 0xf7, 0x00
+
+    .word 0x905a
+    .byte 2, 0xf7, 0x00
+
+    .word 0x905f
+    .byte 2, 0xf7, 0x00
+
+    ; Patch VDP IO accesses
+    .word 0x8331
+    .byte 1, 0xa1
+
+    .word 0x87f1
+    .byte 1, 0xa1
+
+    .word 0x8b59
+    .byte 1, 0xa1
+
+    .word 0x9e38
+    .byte 1, 0xa1
+
+    .word 0x9e42
+    .byte 1, 0xa0
+
+    .word 0x9e51
+    .byte 1, 0xa0
+
+    .word 0
+    .byte 0
+
+montezuma_patches:
+    ; Patch RST 0x30 vector for sound emulation
+    .word 0x801b
+    .byte 3, 0xc3
+    .word 0x300c
+
+    ; Patch in sound emulation
+    .word 0xaca1
+    .byte 2, 0xf7, 0x00
+
+    .word 0xacac
+    .byte 2, 0xf7, 0x00
+
+    .word 0xacb4
+    .byte 2, 0xf7, 0x00
+
+    .word 0xacbf
+    .byte 2, 0xf7, 0x00
+
+    .word 0xaccb
+    .byte 2, 0xf7, 0x00
+
+    .word 0xacfc
+    .byte 2, 0xf7, 0x00
+
+    .word 0xad01
+    .byte 2, 0xf7, 0x00
+
+    .word 0
+    .byte 0
+
+jumpmanjr_patches:
+    ; Patch VDP IO accesses
+    .word 0xae27
+    .byte 1, 0xa1
+
+    .word 0xae2c
+    .byte 1, 0xa1
+
+    .word 0xae2f
+    .byte 1, 0xa0
+
+    .word 0xae37
+    .byte 1, 0xa1
+
+    .word 0xae3a
+    .byte 1, 0xa1
+
+    .word 0xae40
+    .byte 1, 0xa0
+
+    .word 0
+    .byte 0
+
+ladybug_patches:
+    ; Patch out di/im 1 instructions
+    .word 0x8044
+    .byte 3, 0x00
+    .word 0x0000
+
+    .word 0
+    .byte 0
+
+pitfall_patches:
+    ; Patch VDP IO accesses
+    .word 0x8095
+    .byte 1, 0xa1
+
+    .word 0x809a
+    .byte 1, 0xa1
+
+    .word 0x809d
+    .byte 1, 0xa0
+
+    .word 0xa22d
+    .byte 1, 0xa1
+
+    .word 0xa232
+    .byte 1, 0xa1
+
+    .word 0xa235
+    .byte 1, 0xa0
+
+    ; Patch copy protection
+    .word 0xa027
+    .byte 2
+    .word 0x0000
+
+    .word 0xab9e
+    .byte 2
+    .word 0x0000
+
+    .word 0xac2d
+    .byte 2
+    .word 0x0000
+
+    .word 0xaeb4
+    .byte 2
+    .word 0x0000
+
+    .word 0xa11f
+    .byte 1, 0x11
+
+    .word 0
+    .byte 0
+

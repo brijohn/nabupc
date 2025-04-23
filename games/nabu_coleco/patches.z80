@@ -238,13 +238,13 @@ joust_patches:
 
     ; Patch kp_switch emulation
     .word 0xc405
-    .byte 2, 0xef, 0x00
+    .byte 2, 0xd7, 0x00
 
     .word 0xe211
-    .byte 2, 0xef, 0x00
+    .byte 2, 0xd7, 0x00
 
     .word 0xe223
-    .byte 2, 0xef, 0x00
+    .byte 2, 0xd7, 0x00
 
     .word 0
     .byte 0

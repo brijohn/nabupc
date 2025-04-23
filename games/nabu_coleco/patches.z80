@@ -3,6 +3,8 @@
 .section .data, "adrw"
 
 patchset:
+    .word 0x2C8F                            ; Joust (2014) (Team Pixelboy) CRC
+    .word joust_patches
     .word 0x3e76                            ; Tutankham CRC
     .word tutankham_patches
     .word 0xf95f                            ; Montezuma's Revenge CRC
@@ -14,6 +16,238 @@ patchset:
     .word 0x2a56                            ; Pitfall CRC
     .word pitfall_patches
     .word 0
+
+joust_patches:
+    ; Patch out incompatible port dd
+    .word 0xadea
+    .byte 2, 0x00, 0x00
+
+    ; Patch RST 0x10 vector for keypad select
+    .word 0x800F
+    .byte 3, 0xc3
+    .word 0x3000
+    
+    ; Patch RST 0x18 vector for joystick stick 1
+    .word 0x8012
+    .byte 3, 0xc3
+    .word 0x3009 ; most games use 3006 but Joust is swapped
+    
+    ; Patch RST 0x20 vector for joystick stick 2
+    .word 0x8015
+    .byte 3, 0xc3
+    .word 0x3006
+    
+    ; Patch RST 0x28 vector for joy_switch
+    .word 0x8018
+    .byte 3, 0xc3
+    .word 0x3003
+    
+    ; Patch RST 0x30 vector for sound emulation
+    .word 0x801b
+    .byte 3, 0xc3
+    .word 0x300c
+    
+    ; Patch VDP control ports (0BFh, 0B1h, 0A3h) to 0xA1
+    .word 0x98d4
+    .byte 1, 0xa1
+
+    .word 0x98d9
+    .byte 1, 0xa1
+
+    .word 0xbfe9
+    .byte 1, 0xa1
+
+    .word 0xbfee
+    .byte 1, 0xa1
+
+    .word 0xc250
+    .byte 1, 0xa1
+
+    .word 0xc268
+    .byte 1, 0xa1
+
+    .word 0xc26c
+    .byte 1, 0xa1
+
+    .word 0xc2ff
+    .byte 1, 0xa1
+
+    .word 0xc304
+    .byte 1, 0xa1
+
+    .word 0xc311
+    .byte 1, 0xa1
+
+    .word 0xc314
+    .byte 1, 0xa1
+
+    .word 0xc31d
+    .byte 1, 0xa1
+
+    .word 0xc322
+    .byte 1, 0xa1
+
+    .word 0xc340
+    .byte 1, 0xa1
+
+    .word 0xc441
+    .byte 1, 0xa1
+
+    .word 0xc445
+    .byte 1, 0xa1
+
+    .word 0xc44d
+    .byte 1, 0xa1
+
+    .word 0xc452
+    .byte 1, 0xa1
+
+    .word 0xc461
+    .byte 1, 0xa1
+
+    .word 0xc466
+    .byte 1, 0xa1
+
+    .word 0xc46a
+    .byte 1, 0xa1
+
+    .word 0xcecf
+    .byte 1, 0xa1
+
+    .word 0xe009
+    .byte 1, 0xa1
+
+    .word 0xe00d
+    .byte 1, 0xa1
+
+    .word 0xe015
+    .byte 1, 0xa1
+
+    .word 0xe01d
+    .byte 1, 0xa1
+
+    .word 0xe250
+    .byte 1, 0xa1
+
+    .word 0xe255
+    .byte 1, 0xa1
+
+    .word 0xe259
+    .byte 1, 0xa1
+
+    .word 0xe25e
+    .byte 1, 0xa1
+
+    ; Patch VDP data port (0BEh) to 0xA0
+    .word 0xbff1
+    .byte 1, 0xa0
+
+    .word 0xc308
+    .byte 1, 0xa0
+
+    .word 0xc318
+    .byte 1, 0xa0
+
+    .word 0xc325
+    .byte 1, 0xa0
+
+    .word 0xc455
+    .byte 1, 0xa0
+
+    .word 0xe1b0
+    .byte 1, 0xa0
+
+    .word 0xe249
+    .byte 1, 0xa0
+
+    .word 0xe266
+    .byte 1, 0xa0
+
+    .word 0xe281
+    .byte 1, 0xa0
+
+    .word 0xe28d
+    .byte 1, 0xa0
+
+    .word 0x98d1
+    .byte 1, 0xa0
+
+    ; Patch in sound emulation
+    .word 0x84e5
+    .byte 2, 0xf7, 0x00
+
+    .word 0x84f8
+    .byte 2, 0xf7, 0x00
+
+    .word 0xaaf9
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc46e
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc472
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc476
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc47a
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc500
+    .byte 2, 0xf7, 0x00
+
+    .word 0xc516
+    .byte 2, 0xf7, 0x00
+
+    ; Patch joystick/keypad 1 read emulation
+    .word 0xc416
+    .byte 2, 0xdf, 0x00
+
+    .word 0xc42b
+    .byte 2, 0xdf, 0x00
+
+    .word 0xe21c
+    .byte 2, 0xdf, 0x00
+
+    .word 0xe22a
+    .byte 2, 0xdf, 0x00
+
+    ; Patch joystick/keypad 2 read emulation
+    .word 0xc41a
+    .byte 2, 0xe7, 0x00
+
+    .word 0xc42f
+    .byte 2, 0xe7, 0x00
+
+    .word 0xe215
+    .byte 2, 0xe7, 0x00
+
+    .word 0xe227
+    .byte 2, 0xe7, 0x00
+
+    ; Patch in joy_switch emulation
+    .word 0xc420
+    .byte 2, 0xef, 0x00
+
+    .word 0xc857
+    .byte 2, 0xef, 0x00
+
+    .word 0xe22e
+    .byte 2, 0xef, 0x00
+
+    ; Patch kp_switch emulation
+    .word 0xc405
+    .byte 2, 0xef, 0x00
+
+    .word 0xe211
+    .byte 2, 0xef, 0x00
+
+    .word 0xe223
+    .byte 2, 0xef, 0x00
+
+    .word 0
+    .byte 0
 
 tutankham_patches:
     ; Patch RST 0x30 vector for sound emulation

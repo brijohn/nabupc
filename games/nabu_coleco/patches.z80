@@ -18,10 +18,6 @@ patchset:
     .word 0
 
 joust_patches:
-    ; Patch out incompatible port dd
-    .word 0xadea
-    .byte 2, 0x00, 0x00
-
     ; Patch RST 0x10 vector for keypad select
     .word 0x800F
     .byte 3, 0xc3

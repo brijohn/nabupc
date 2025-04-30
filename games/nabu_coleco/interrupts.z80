@@ -52,6 +52,10 @@ keyboard_interrupt:
     in  a, (KEYBOARD_DATA)                  ; Read keyboard scan code
     cp 0x94                                 ; Check for watchdog signal
     jr z, clear_keypad                      ; Clear keypad state on watchdog tick
+    cp 0x80
+    jp z, joy1
+    cp 0x81
+    jp z, joy2
     cp 0x2d                                 ; Check for '-' key (mapped to '*')
     jr z, handle_keypad_star
     cp 0x3d                                 ; Check for '=' key (mapped to '#')
@@ -107,11 +111,12 @@ set_keypad:
     or b                                    ; Add new keypad value
     ld (hl), a                              ; Save updated keypad value
     jr keyboard_interrupt_exit
-
 handle_stick_emulation:
+    push af                                 ; Save registers
+    ld   a, 0
+    ld   (current_keypad), a                ; Keyboard only emulates joy1
+    pop  af
     ld b, a                                 ; Save scan code
-    cp 0xe8                                 ; Check if SYM key
-    jr z, handle_sym_key
     and 0x0f                                ; Mask scan code to lower nibble
     cp 0x04                                 ; Check for page right key
     jr z, handle_right_trigger
@@ -145,16 +150,14 @@ handle_right_trigger:
     jr z, keyboard_interrupt_exit
     set 6, (hl)                             ; Set trigger bit if keyup (trigger released)
     jr keyboard_interrupt_exit
-handle_sym_key:
-    ld a, (current_keypad)                  ; Toggle current controller index
-    xor 1
-    ld (current_keypad), a
-    ld a, (status_led_state)                ; Toggle check LED state
-    xor 8
-    out (0x00), a                           ; Set new LED state
-    ld (status_led_state), a
+joy1:
+    ld  a, 0                                ; Switch to joy1
+    ld  (current_keypad), a
     jp keyboard_interrupt_exit
-
+joy2:
+    ld  a, 1                                ; Switch to joy2
+    ld  (current_keypad), a
+    jp keyboard_interrupt_exit
 handle_joystick:
     ld b, a                                 ; Save scan code
     and 0x0f                                ; Mask scan code for table offset

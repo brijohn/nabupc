@@ -208,8 +208,8 @@ joust_patches:
 
     .word 0xe227
     .byte 2, 0xdf, 0x00
-	
-	; Patch joystick/keypad 2 read emulation 0xFF
+
+    ; Patch joystick/keypad 2 read emulation 0xFF
     .word 0xc416
     .byte 2, 0xe7, 0x00
 

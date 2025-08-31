@@ -21,27 +21,27 @@ joust_patches:
     ; Patch RST 0x10 vector for keypad select
     .word 0x800F
     .byte 3, 0xc3
-    .word 0x3000
+    .word 0x2100
     
     ; Patch RST 0x18 vector for joystick stick 1
     .word 0x8012
     .byte 3, 0xc3
-    .word 0x3009 ; most games use 3006 but Joust is swapped
+    .word 0x2109 ; most games use 2106 but Joust is swapped
     
     ; Patch RST 0x20 vector for joystick stick 2
     .word 0x8015
     .byte 3, 0xc3
-    .word 0x3006
+    .word 0x2106
     
     ; Patch RST 0x28 vector for joy_switch
     .word 0x8018
     .byte 3, 0xc3
-    .word 0x3003
+    .word 0x2103
     
     ; Patch RST 0x30 vector for sound emulation
     .word 0x801b
     .byte 3, 0xc3
-    .word 0x300c
+    .word 0x210c
     
     ; Patch VDP control ports (0BFh, 0B1h, 0A3h) to 0xA1
     .word 0x98d4
@@ -249,12 +249,12 @@ tutankham_patches:
     ; Patch RST 0x30 vector for sound emulation
     .word 0x801b
     .byte 3, 0xc3
-    .word 0x300c
+    .word 0x210c
 
     ; Patch RST 0x28 vector for joy_switch
     .word 0x8018
     .byte 3, 0xc3
-    .word 0x3003
+    .word 0x2103
 
     ; Patch in joy_switch emulation
     .word 0x82c8
@@ -308,7 +308,7 @@ montezuma_patches:
     ; Patch RST 0x30 vector for sound emulation
     .word 0x801b
     .byte 3, 0xc3
-    .word 0x300c
+    .word 0x210c
 
     ; Patch in sound emulation
     .word 0xaca1

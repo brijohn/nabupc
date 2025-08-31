@@ -113,11 +113,11 @@
 ; I/O port addresses
 ;***************************************
 
-.set KP_SELECT, 0x3000                ; Keypad select emulation address
-.set JOY_SELECT, 0x3003               ; Joystick select emulation address
-.set READ_JOY1, 0x3006                ; Joystick 1 input emulation address
-.set READ_JOY2, 0x3009                ; Joystick 2 input emulation address
-.set WRITE_SOUND, 0x300C              ; Sound chip output emulation address
+.set KP_SELECT, 0x2100                ; Keypad select emulation address
+.set JOY_SELECT, 0x2103               ; Joystick select emulation address
+.set READ_JOY1, 0x2106                ; Joystick 1 input emulation address
+.set READ_JOY2, 0x2109                ; Joystick 2 input emulation address
+.set WRITE_SOUND, 0x210C              ; Sound chip output emulation address
 .set IO_VDP_Data, 0xA0                ; VDP data port
 .set IO_VDP_Addr, 0xA1                ; VDP VRAM address output port
 .set IO_VDP_Status, 0xA1              ; VDP status input port

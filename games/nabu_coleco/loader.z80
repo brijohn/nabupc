@@ -31,9 +31,9 @@ entry:
     di                                      ; Ensure interrupts are disabled
     ld sp, 0x73b9                           ; Setup stack out of the way
 
-    ; Relocate code to address 0x2100
+    ; Relocate code to address 0x2110
     ld hl, reloc_end - 1
-    ld de, 0x2100 + reloc_length - 1
+    ld de, reloc_start
     ld bc, reloc_length
     lddr
 
@@ -105,7 +105,7 @@ skip_patches:
     call lookup_patches                     ; Look up patch table based on crc16
     ld a, ixh
     or ixl
-    jr z, start_rom                         ; If no patch tabble found, skip apply patches
+    jr z, start_rom                         ; If no patch table found, skip apply patches
     call patch                              ; Apply patches to ROM
 start_rom:
     ld a, 0x03

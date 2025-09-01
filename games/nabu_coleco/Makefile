@@ -3,11 +3,11 @@ ASM        = vasmz80_std
 LINK       = vlink
 ASM_FLAGS  = -Fvobj -Lall
 LINK_FLAGS = -brawbin1 -Bforcearchive
-OBJS       = loader.o vdp.o interrupts.o hcca.o emu.o patcher.o
+OBJS       = loader.o vdp.o menu.o interrupts.o hcca.o emu.o patcher.o
 
 
 .PHONY: all
-all: 000001.nabu 000002.nabu 000003.nabu
+all: 000001.nabu 000002.nabu 000003.nabu 000004.nabu
 
 %.o: %.z80
 	@echo "Assembling $<..."
@@ -25,10 +25,14 @@ all: 000001.nabu 000002.nabu 000003.nabu
 	@echo "Linking patches..."
 	@$(LINK) $(LINK_FLAGS) -Tvlink_patches.cmd -vicelabels patches.sym -o $@ $^
 
+000004.nabu: menudata.o
+	@echo "Linking menu..."
+	@$(LINK) $(LINK_FLAGS) -Tvlink_menu.cmd -vicelabels menudata.sym -o $@ $^
+
 .PHONY: mame
-mame: 000001.nabu 000002.nabu 000003.nabu
+mame: 000001.nabu 000002.nabu 000003.nabu 000004.nabu
 	@echo "Creating coleco.npz"
-	zip coleco.npz 000001.nabu 000002.nabu 000003.nabu
+	zip coleco.npz 000001.nabu 000002.nabu 000003.nabu 000004.nabu
 
 .PHONY: clean
 clean:

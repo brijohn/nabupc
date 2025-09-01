@@ -71,6 +71,39 @@ clear_screen_loop:
     jr nz, clear_screen_loop                ; Continue until all characters are written
     ret
 
+; --- clear_rows_range: clear inclusive rows [A..C], cols 0..39 ----------------
+.global clear_rows_range
+clear_rows_range:
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+    push hl                                 ; Save HL
+
+    ld e, c                                 ; Save end_row in E
+    ld b, a                                 ; B = start_row
+    ld c, 0                                 ; C = col 0
+    call calc_vram_address                  ; HL = start row base
+    ex de, hl                               ; DE = start
+
+    ld b, e                                 ; B = end_row
+    ld c, 0                                 ; C = col 0
+    call calc_vram_address                  ; HL = end row base
+
+    or a                                    ; Clear carry
+    sbc hl, de
+    ld bc, 40
+    add hl, bc                              ; HL = byte count
+
+    ex de, hl                               ; HL = start
+    ld b, d                                 ; BC = count
+    ld c, e
+    ld a, ' '                               ; A = ' '
+    call fill_vram                          ; Fill range with spaces
+
+    pop hl
+    pop de
+    pop bc
+    ret
+
 ; Scroll the screen up by one row, clearing the last row
 scroll_screen:
     push bc                                 ; Save BC
@@ -253,6 +286,22 @@ load_vram_loop:
     jr nz, load_vram_loop                   ; Continue until all bytes are written
     ret
 
+; Fill VRAM
+; Input: HL = Destination address in VRAM
+;        BC = Number of bytes to transfer
+;        A = Fill value
+fill_vram:
+    call set_vdp_write_address              ; Set VRAM write address to HL (original DE)
+    ld h, a                                 ; Save fill value
+fill_vram_loop:
+    out (VDP_DATA), a                       ; Write byte to VRAM
+    dec bc                                  ; Decrement byte count
+    ld a, b
+    or c                                    ; Check if BC is zero
+    ld a, h                                 ; Restore fill value
+    jr nz, fill_vram_loop                   ; Continue until all bytes are written
+    ret
+
 ; Print a null-terminated string
 ; Input: DE = Address of the string in RAM
 .global print_string
@@ -297,7 +346,7 @@ vdp_registers:
     .byte (PATTERN_TABLE >> 11)             ; Register 4: Pattern generator table address divided by 0x800
     .byte 0x00                              ; Register 5: (Not used in text mode)
     .byte 0x00                              ; Register 6: (Not used in text mode)
-    .byte 0xF1                              ; Register 7: Foreground and background colors
+    .byte 0x74                              ; Register 7: Foreground and background colors
 
 ; Font data taken from z88dk
 font_table:

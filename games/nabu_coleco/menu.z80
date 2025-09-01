@@ -1,0 +1,370 @@
+; Menu  routines
+;
+; Copyright (c) 2025 Brian Johnson.  All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+; IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+; OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+; IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+; INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+; NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+; DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+; THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+; ===== defines ================================================================
+.set ENTRY_SEGMENT_OFF,   20
+.set ENTRY_SIZE,          23
+
+.set MENU_TOP_ROW,        10
+.set MENU_VISIBLE_ROWS,   8
+.set MENU_BOTTOM_ROW,     (MENU_TOP_ROW + MENU_VISIBLE_ROWS - 1)
+
+; Start column for the centered block
+.set MENU_BLOCK_START_COL,    ((40 - 22) / 2)
+
+.set JOY_BIT_UP,      0         ; D0 = Up
+.set JOY_BIT_RIGHT,   1         ; D1 = Right
+.set JOY_BIT_DOWN,    2         ; D2 = Down
+.set JOY_BIT_LEFT,    3         ; D3 = Left
+.set JOY_BIT_FIRE,    6         ; D6 = Left Fire (primary select)
+
+.set JOY_MASK_UP,     (1 << JOY_BIT_UP)
+.set JOY_MASK_DOWN,   (1 << JOY_BIT_DOWN)
+.set JOY_MASK_RIGHT,  (1 << JOY_BIT_RIGHT)
+.set JOY_MASK_LEFT,   (1 << JOY_BIT_LEFT)
+.set JOY_MASK_FIRE,   (1 << JOY_BIT_FIRE)
+.set JOY_MASK_ALL,    (JOY_MASK_UP | JOY_MASK_DOWN | JOY_MASK_RIGHT | JOY_MASK_LEFT | JOY_MASK_FIRE)
+
+; ===== code ===================================================================
+.section .text, "acrx"
+
+; Sets up the base address of the menu data structure
+; and count of items
+;  In:
+;      HL = menu data table address
+.global set_menu_base
+set_menu_base:
+    ld a, (hl)                     ; Address of menu data structure
+    ld (menu_entry_count), a       ; Store item count
+    inc hl
+    ld (menu_table_base), hl       ; Store table base address
+    ret
+
+; Display ROM menu and wait for selection
+; Output:
+;   B  = ROM ID
+;   DE = ROM CRC16
+.global menu_wait_for_selection
+menu_wait_for_selection:
+    call display_menu                       ; Display Menu
+    ei                                      ; Enable interrupts to allow controller input
+
+menu_wait_loop:
+    call menu_handle_input                  ; Carry=1 if item was selected
+    jr c, menu_item_selected
+
+    halt                                    ; Sleep until next interrupt
+    jr menu_wait_loop
+
+menu_item_selected:
+    di                                      ; Turn off interrupts again
+    ld a, 0x7F
+    ld ix, keypad1_value                    ; Reset values for keypad/joysticks to default
+    ld (ix + 0), a
+    ld (ix + 1), a
+    ld (ix + 2), a
+    ld (ix + 3), a
+    ret                                     ; B = ROM Number, DE = ROM CRC16
+
+; --- display_menu --------------------------------------------------------------
+display_menu:
+    push af                                 ; Save AF
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+    push hl                                 ; Save HL
+
+    ld a, MENU_TOP_ROW
+    ld c, MENU_BOTTOM_ROW
+    call clear_rows_range                   ; Clear menu area
+
+    ld d, 0                                 ; Window row = 0..(MENU_VISIBLE_ROWS - 1)
+display_menu_row:
+    ld a, d
+    cp MENU_VISIBLE_ROWS
+    jr nc, display_menu_done                ; Finish menu drawing when D >= MENU_VISIBLE_ROWS
+
+    ld a, (menu_offset)                     ; Index of first elemnt to be displayed in menu window
+    add a, d
+    ld  e, a                                ; E = absolute index of selected item
+
+    ld a, MENU_TOP_ROW
+    add a, d
+    ld b, a                                 ; B=current display row
+    ld c, MENU_BLOCK_START_COL              ; C=current display col
+    call set_cursor                         ; Position cursor to display menu item
+
+    ld a, (current_selection)               ; If currently selected item
+    cp e                                    ; is not equal to the current index
+    ld a, ' '                               ; then draw a ' '
+    jr nz, display_menu_marker_out
+    ld a, '>'                               ; else draw '>'
+display_menu_marker_out:
+    call print_char
+    ld a, ' '
+    call print_char                         ; Print ' '
+
+    ld a, e                                 ; A=Index entry name to print
+    call get_entry_ptr                      ; HL=entry.name
+    push de
+    ex de, hl                               ; DE=entry.name
+    call print_string                       ; Print entry name
+    pop de
+
+    inc d
+    jr display_menu_row                     ; Display next row
+
+display_menu_done:
+    pop hl                                  ; Restore HL
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    pop af                                  ; Restore AF
+    ret
+
+; Updates the cursor for the currently selected item
+; IN:
+;      A = Old selection
+update_cursor:
+    push bc                                 ; Save BC
+    push de                                 ; Save DE
+
+    ld b, a                                 ; B = Old Selection
+    ld a, (menu_offset)
+    ld d, a                                 ; D = Menu offset
+
+    ld a, b
+    sub d                                   ; A = old - offset
+    add a, MENU_TOP_ROW                     ; screen row
+    ld b, a                                 ; B = Row 
+    ld c, MENU_BLOCK_START_COL              ; C = Column
+    call set_cursor
+    ld a, ' '
+    call print_char                         ; Delete Previous cursor
+
+    ld a, (current_selection)
+    sub d                                   ; A = new - offset
+    add a, MENU_TOP_ROW
+    ld b, a                                 ; B = Row
+    ld c, MENU_BLOCK_START_COL              ; C = Column
+    call set_cursor
+    ld a, '>'
+    call print_char                         ; Draw new cursor
+
+    pop de                                  ; Restore DE
+    pop bc                                  ; Restore BC
+    ret
+
+
+; Reads current joystick state and updates selected menu item accordingly
+; Out: 
+;      B = ROM pak number
+;      DE = ROM CRC16
+menu_handle_input:
+    ld a, (current_selection)
+    ld h, a                                 ; H = old selection
+    ld a, (menu_offset)
+    ld l, a                                 ; L = old offset
+
+    call read_joystick                      ; A = raw Coleco bits (0 = pressed)
+    cpl                                     ; Invert -> 1 = pressed
+    and JOY_MASK_ALL
+    ld e, a                                 ; E = current joystick normalized state
+
+    ld a, (joy_prev_norm)
+    cpl                                     ; Previous normalized state (inverted)
+    and e
+    ld b, a                                 ; B = Edge detected state (1 = newly pressed)
+
+    ld a, e
+    ld (joy_prev_norm), a                   ; Update previous state
+
+    ld a, b
+    and JOY_MASK_FIRE
+    jr z, menu_handle_input_up              ; If fire was not pressed check for the up button
+
+    ld a, (current_selection)               ;
+    call get_entry_ptr                      ; Look up menu entry
+    call read_entry_fields                  ; and get its pack entry and CRC16
+    scf                                     ; Carry=1 (item selected)
+    jr menu_handle_input_done
+menu_handle_input_up:
+    ld a, b
+    and JOY_MASK_UP                         ; Check for up button
+    jr z, menu_handle_input_down            ; If it was not pressed check for down
+    call menu_move_up                       ; Move cursor position up
+
+menu_handle_input_down:
+    ld a, b
+    and JOY_MASK_DOWN                       ; Check for down down button
+    jr z, menu_handle_input_update          ; If it was not pressed move on to menu redraw
+    call menu_move_down                     ; Move cursor position down
+menu_handle_input_update:
+    
+    ld a, (menu_offset)
+    cp l                                    ; L = previous menu offset
+    jr nz, menu_handle_input_full_redraw
+
+    ld a, (current_selection)
+    cp h                                    ; H = previous selection
+    jr z, menu_handle_input_no_change
+
+    ld a, h                                 ; A = old_selection
+    call update_cursor                      ; Update cursor position
+    jr menu_handle_input_no_change
+menu_handle_input_full_redraw:
+    call display_menu                       ; Display updated menu if window was updated
+menu_handle_input_no_change:
+    and a                                   ; No selection -> Carry=0
+menu_handle_input_done:
+    ret
+
+menu_move_up:
+    push af                                 ; Save AF
+    ld a, (current_selection)               ; A = current selection
+    or a                                    ; If A == 0 (Top of menu)
+    jr z, menu_move_up_exit                 ; then exit
+    dec a                                   ; Decrement and store current selection
+    ld (current_selection), a
+    call ensure_selection_visible           ; Update display window if necessary
+menu_move_up_exit:
+    pop af                                  ; Restore AF
+    ret
+
+menu_move_down:
+    push af                                 ; Save AF
+    push bc                                 ; Save BC
+    ld a, (menu_entry_count)
+    dec a
+    ld b, a                                 ; B = last menu item index (count - 1)
+    ld a, (current_selection)               ; A = current selection
+    cp b                                    ; If A >= B
+    jr nc, menu_move_down_exit              ; then exit
+    inc a                                   ; Increment and store current selection
+    ld (current_selection), a
+    call ensure_selection_visible           ; Update display window if necessary
+menu_move_down_exit:
+    pop bc                                  ; Restore BC
+    pop af                                  ; Restore AF
+    ret
+
+; Keep current_selection within [menu_offset .. menu_offset + VISIBLE_ROWS - 1]
+ensure_selection_visible:
+    push af                                 ; Save AF
+    push bc                                 ; Save BC
+
+    ld a, (current_selection)
+    ld b, a                                 ; B = current selection
+
+    ld a, (menu_offset)
+    cp b
+    jr c, check_bottom                      ; If offset < selection
+    ld a, b
+    ld (menu_offset), a                     ; Set menu offset to current selection
+    jr clamp_value
+
+check_bottom:
+    ld a, (menu_offset)
+    add a, MENU_VISIBLE_ROWS - 1
+    cp b
+    jr nc, clamp_value                      ; within window
+    ld a, b
+    sub MENU_VISIBLE_ROWS - 1
+    ld (menu_offset), a
+
+clamp_value:
+    ld a, (menu_entry_count)
+    sub MENU_VISIBLE_ROWS
+    jr  nc, have_max
+    xor a
+have_max:
+    ld c, a                                 ; C = max_offset
+
+    ld a, (menu_offset)
+    cp c
+    jr c, offset_ok                         ; offset <= max_offset
+    ld a, c
+    ld (menu_offset), a
+offset_ok:
+    pop bc                                  ; Restore BC
+    pop af                                  ; Restore AF
+    ret
+
+
+; Look up menu item in menu data structure
+; In:
+;      A = index
+; Out:
+;      HL = Address of menu item
+get_entry_ptr:
+    push de                                 ; Save DE
+    push bc                                 ; Save BC
+    ld de, ENTRY_SIZE                       ; DE = entry size
+    ld hl, (menu_table_base)                ; HL = address of menu array
+    ld b, a                                 ; B = index
+    or a                                    ; If Index == 0
+    jr z, get_entry_done                    ; Then exit early
+get_entry_loop:
+    add hl, de                              ; Add de to hl
+    djnz get_entry_loop                     ; Continue to loop till we reaxh the correct index
+get_entry_done:
+    pop     bc                              ; Restore BC
+    pop     de                              ; Restore DE
+    ret
+
+; Read menu entry fields
+; In:
+;      HL = entry address
+; Out:
+;      HL = name
+;      B  = ROM pack number
+;      DE = ROM CRC16 (E=lo, D=hi)
+read_entry_fields:
+    push hl                                 ; Save HL
+    ld de, ENTRY_SEGMENT_OFF
+    add hl, de
+    ld b, (hl)                              ; B = pack number 
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)                              ; DE = CRC16
+    pop hl                                  ; Restore HL
+    ret
+
+read_joystick:
+    ld a, (joy1_value)                      ; A = controller 1 input
+    ret
+
+; ===== data ===================================================================
+.section .data, "adrw"
+menu_table_base:
+    .word 0                                 ; Address of menu data table
+menu_offset:                                ; Offset in menu table to start displaying entries
+    .byte 0
+current_selection:                          ; Offset of currently selected menu item
+    .byte 0
+menu_entry_count:                           ; Item count for menu
+    .byte 0
+
+joy_prev_norm:
+    .byte 0                                 ; Previous normalized state (1=pressed)
+

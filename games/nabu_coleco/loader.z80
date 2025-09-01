@@ -64,7 +64,7 @@ main:
     ld hl, 0x0002
     ld de, 0x0000
     call request_pack                       ; Request pack 2 (bios) and load at address 0x0000
-    jr c, no_bios
+    jp c, no_bios
     ld bc, 0x0400                           ; Row = 4, Column = 0
     call set_cursor                         ; Set Cursor
     ld de, patch_msg
@@ -80,11 +80,32 @@ main:
 skip_patches:
     ld bc, 0x0500                           ; Row = 5, Column = 0
     call set_cursor                         ; Set Cursor
+    ld de, menu_msg
+    call print_string                       ; Print loading menu message
+    ld hl, 0x0004
+    ld de, 0x4000
+    call request_pack                       ; Request pack 4 (menu) and load at address 0x4000
+    jr c, skip_menu                         ; Check if we successfully loaded the menu pak
+    ld a, 0xc0                              ; C = INTERRUPT_HCCA_RX | INTERRUPT_HCCA_TX
+    call disable_interrupts                 ; Disable HCCA interrupt generation
+    ld hl, 0x4000                           ; Menu pack is loaded at address 0x4000
+    call set_menu_base                      ; store base address of menu
+    call menu_wait_for_selection            ; Loop until user selects a menu item
+    ld (rom_crc), de                        ; Save CRC for selected item
+    ld a, b
+    ld (rom_id), a                          ; Save ROM ID
+    ld a, 0xc0                              ; C = INTERRUPT_HCCA_RX | INTERRUPT_HCCA_TX
+    call enable_interrupts                  ; Enable HCCA interrupt generation
+skip_menu:
+    ld bc, 0x0600                           ; Row = 6, Column = 0
+    call set_cursor                         ; Set Cursor
     ld de, rom_msg
     call print_string                       ; Print loading rom message
-    ld hl, 0x0004
+    ld a, (rom_id)
+    ld h, 0x00
+    ld l, a                                 ; HL=ROM ID (5-255)
     ld de, 0x8000
-    call request_pack                       ; Request pack 4 (ROM) and load at address 0x8000
+    call request_pack                       ; Request ROM pack and load at address 0x8000
     push af                                 ; Save Flags
     ld a, 0xc0                              ; C = INTERRUPT_HCCA_RX | INTERRUPT_HCCA_TX
     call disable_interrupts                 ; Disable HCCA interrupt generation
@@ -181,8 +202,16 @@ bios_failed_msg:
     .byte "Failed to load BIOS", 0
 patch_msg:
     .byte "Loading Patches ", 0
+menu_msg:
+    .byte "Loading Menu ", 0
 rom_msg:
     .byte "Loading ROM ", 0
 
+menu_loaded:
+    .byte 0
+rom_id:
+    .byte 0xff
+rom_crc:
+    .word 0
 patches_loaded:
     .byte 0

@@ -1,0 +1,53 @@
+; Menu definition for supported games
+
+.section .data, "adrw"
+menudata:
+    .byte 16
+    .byte "Burger Time        ", 0
+    .byte 5
+    .word 0x88A0
+    .byte "Carnival           ", 0
+    .byte 6
+    .word 0x67BC
+    .byte "Congo Bongo        ", 0
+    .byte 7
+    .word 0x9C15
+    .byte "Donkey Kong        ", 0
+    .byte 8
+    .word 0x0DC3
+    .byte "Donkey Kong Jr     ", 0
+    .byte 9
+    .word 0xD9FA
+    .byte "Joust              ", 0
+    .byte 10
+    .word 0x2C8F
+    .byte "Jumpman Jr.        ", 0
+    .byte 11
+    .word 0xB3B2
+    .byte "Lady Bug           ", 0
+    .byte 12
+    .word 0x4F44
+    .byte "Montezuma's Revenge", 0
+    .byte 13
+    .word 0xF95F
+    .byte "Mr. Do             ", 0
+    .byte 14
+    .word 0xEE84
+    .byte "Pepper II          ", 0
+    .byte 15
+    .word 0xFE4F
+    .byte "Pitfall            ", 0
+    .byte 16
+    .word 0x2A56
+    .byte "Pitfall II         ", 0
+    .byte 17
+    .word 0xD6E4
+    .byte "Q-Bert II          ", 0
+    .byte 18
+    .word 0xA647
+    .byte "Smurfs             ", 0
+    .byte 19
+    .word 0xC959
+    .byte "Tutankham          ", 0
+    .byte 20
+    .word 0x3E76

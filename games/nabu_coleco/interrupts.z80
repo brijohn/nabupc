@@ -178,8 +178,8 @@ joystick_set:
 ; VDP VSYNC interrupt handler
 .global vdp_vsync_interrupt
 vdp_vsync_interrupt:
-    push af                                 ; Save AF
     call 0x66                               ; Call NMI interrupt vector
+    push af                                 ; Save AF
     in a, (0xA1)                            ; Clear VDP interrupt
     pop af                                  ; Restore AF
     ei                                      ; Re-enable interrupts
@@ -235,6 +235,8 @@ install_loop:
 ; Input: A = Bitmask of interrupts to enable
 .global enable_interrupts
 enable_interrupts:
+    push hl                                 ; Save HL
+    push bc                                 ; Save BC
     ld hl, current_interrupt_mask           ; Address of the interrupt mask state
     ld b, (hl)                              ; Load current interrupt mask
     or b                                    ; Enable specified interrupts in the mask
@@ -244,12 +246,16 @@ enable_interrupts:
     out (AY38910_ADDR), a                   ; Select IO Port A register
     pop af                                  ; Restore A register (input bitmask)
     out (AY38910_DATA), a                   ; Write updated interrupt mask to Port A
+    pop bc                                  ; Restore BC
+    pop hl                                  ; Restore HL
     ret                                     ; Return after enabling interrupts
 
 ; Disable specific interrupts
 ; Input: A = Bitmask of interrupts to disable
 .global disable_interrupts
 disable_interrupts:
+    push hl                                 ; Save HL
+    push bc                                 ; Save BC
     ld hl, current_interrupt_mask           ; Address of the interrupt mask state
     ld b, (hl)                              ; Load current interrupt mask
     cpl                                     ; Invert the bitmask
@@ -260,12 +266,15 @@ disable_interrupts:
     out (AY38910_ADDR), a                   ; Select IO Port A register
     pop af                                  ; Restore A register (input bitmask)
     out (AY38910_DATA), a                   ; Write updated mask to Port A
+    pop bc                                  ; Restore BC
+    pop hl                                  ; Restore HL
     ret                                     ; Return after disabling interrupts
 
 ; Set specific interrupts
 ; Input: A = Bitmask of interrupts to set
 .global set_interrupts
 set_interrupts:
+    push hl                                 ; Save HL
     ld hl, current_interrupt_mask           ; Address of the interrupt mask state
     ld (hl), a                              ; Overwrite current interrupt mask
     push af                                 ; Save A register (input bitmask)
@@ -273,6 +282,7 @@ set_interrupts:
     out (AY38910_ADDR), a                   ; Select IO Port A register
     pop af                                  ; Restore A register (input bitmask)
     out (AY38910_DATA), a                   ; Write new interrupt mask to Port A
+    pop hl                                  ; Restore HL
     ret                                     ; Return after setting interrupts
 
 .section .data, "adrw"
